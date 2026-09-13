@@ -1,0 +1,10 @@
+/build/
+/cmake-build-*/
+*.o
+*.a
+*.so
+*.sqlite
+*.sqlite3
+*.sqlite3-*
+/deploy/*.env
+/.cache/

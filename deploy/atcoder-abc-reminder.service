@@ -1,0 +1,22 @@
+[Unit]
+Description=AtCoder ABC Discord Reminder Bot
+Wants=network-online.target time-sync.target
+After=network-online.target time-sync.target
+
+[Service]
+Type=simple
+ExecStart=/srv/shared/remider/bin/atcoder-abc-reminder
+EnvironmentFile=/etc/atcoder-abc-reminder/atcoder-abc-reminder.env
+User=abc-reminder
+Group=abc-reminder
+WorkingDirectory=/srv/shared/remider
+Restart=on-failure
+RestartSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/srv/shared/remider
+
+[Install]
+WantedBy=multi-user.target
