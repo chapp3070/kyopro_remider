@@ -29,14 +29,16 @@ RestDiscordClient::RestDiscordClient(HttpClient& http, const Config& config)
 SendResult RestDiscordClient::send(const std::string& content,
                                    const std::string& messageKey,
                                    std::string& error) {
-    if (config_.discordToken.empty() || !isNumeric(config_.discordChannelId)) {
-        error = "Discord token or channel ID is missing/invalid";
+    if (config_.discordToken.empty() || !isNumeric(config_.discordChannelId)
+        || !isNumeric(config_.discordRoleId)) {
+        error = "Discord token, channel ID, or role ID is missing/invalid";
         return SendResult::ConfigurationError;
     }
 
     const Json request = {
         {"content", content},
-        {"allowed_mentions", {{"parse", Json::array()}}},
+        {"allowed_mentions", {{"parse", Json::array()},
+                               {"roles", Json::array({config_.discordRoleId})}}},
         {"nonce", messageKey},
         {"enforce_nonce", true},
     };
@@ -58,8 +60,9 @@ SendResult RestDiscordClient::send(const std::string& content,
 }
 
 bool RestDiscordClient::findByKey(const std::string& messageKey, std::string& error) {
-    if (config_.discordToken.empty() || !isNumeric(config_.discordChannelId)) {
-        error = "Discord token or channel ID is missing/invalid";
+    if (config_.discordToken.empty() || !isNumeric(config_.discordChannelId)
+        || !isNumeric(config_.discordRoleId)) {
+        error = "Discord token, channel ID, or role ID is missing/invalid";
         return false;
     }
 

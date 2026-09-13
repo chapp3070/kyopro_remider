@@ -110,11 +110,13 @@ int run() {
     Config config;
     config.discordToken = environment("ATCODER_DISCORD_BOT_TOKEN");
     config.discordChannelId = environment("ATCODER_DISCORD_CHANNEL_ID");
+    config.discordRoleId = environment("ATCODER_DISCORD_ROLE_ID");
     const std::string configuredDb = environment("ATCODER_STATE_DB");
     if (!configuredDb.empty()) config.stateDbPath = configuredDb;
 
-    if (config.discordToken.empty() || config.discordChannelId.empty()) {
-        log("CONFIG_ERROR", "ATCODER_DISCORD_BOT_TOKEN and ATCODER_DISCORD_CHANNEL_ID are required");
+    if (config.discordToken.empty() || config.discordChannelId.empty()
+        || config.discordRoleId.empty()) {
+        log("CONFIG_ERROR", "ATCODER_DISCORD_BOT_TOKEN, ATCODER_DISCORD_CHANNEL_ID, and ATCODER_DISCORD_ROLE_ID are required");
         return 2;
     }
 
@@ -260,7 +262,7 @@ int run() {
                 } else {
                     std::string sendError;
                     const SendResult result = discord.send(
-                        makeNotificationContent(state->contest), key, sendError);
+                        makeNotificationContent(state->contest, config.discordRoleId), key, sendError);
                     if (result == SendResult::Sent || result == SendResult::AlreadyExists) {
                         CurrentContest sentState = *state;
                         markSentState(sentState, kind);

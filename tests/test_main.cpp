@@ -1,4 +1,5 @@
 #include "atcoder_reminder/atcoder_html_parser.hpp"
+#include "atcoder_reminder/discord_client.hpp"
 #include "atcoder_reminder/message_template.hpp"
 #include "atcoder_reminder/reminder_policy.hpp"
 #include "atcoder_reminder/state_repository.hpp"
@@ -8,6 +9,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <nlohmann/json.hpp>
 #include <stdexcept>
 
 namespace {
@@ -15,6 +17,25 @@ namespace {
 void require(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);
 }
+
+class CapturingHttpClient final : public reminder::HttpClient {
+public:
+    reminder::HttpResponse get(const std::string&, std::size_t) override {
+        return {};
+    }
+
+    reminder::HttpResponse getJson(const std::string&, const std::string&, std::size_t) override {
+        return {};
+    }
+
+    reminder::HttpResponse postJson(const std::string&, const std::string&,
+                                    const std::string& body) override {
+        postedBody = body;
+        return reminder::HttpResponse{201, "{}", {}, {}};
+    }
+
+    std::string postedBody;
+};
 
 const char* fixture = R"HTML(
 <html><body>
@@ -54,13 +75,37 @@ void testParserAndMessage() {
     require(conflicting.tableFound && conflicting.contests.empty(),
             "conflicting duplicate schedules must be rejected");
 
-    const std::string content = reminder::makeNotificationContent(parsed.contests[0]);
+    const std::string content = reminder::makeNotificationContent(
+        parsed.contests[0], "123456789012345678");
     const std::string expected =
+        "<@&123456789012345678>\n\n"
         "# AtCoder Beginner Contest 476\n\n"
         "本日 21:00 ～ 22:40 に [AtCoder Beginner Contest 476]"
         "(https://atcoder.jp/contests/abc476) が開催されます。\n\n"
         "皆さんぜひ参加しましょう！🔥";
     require(content == expected, "notification content must match the design");
+}
+
+void testDiscordRoleMention() {
+    CapturingHttpClient http;
+    reminder::Config config;
+    config.discordToken = "test-token";
+    config.discordChannelId = "123456789012345678";
+    config.discordRoleId = "234567890123456789";
+    reminder::RestDiscordClient discord(http, config);
+    std::string error;
+    const reminder::SendResult result = discord.send(
+        "<@&234567890123456789>\n\nbody", "normal:abc476:1800000000", error);
+    require(result == reminder::SendResult::Sent, "role mention request should be sent");
+    const nlohmann::json request = nlohmann::json::parse(http.postedBody);
+    require(request["content"].get<std::string>().rfind(
+                "<@&234567890123456789>\n\n", 0) == 0,
+            "role mention must be at the beginning of content");
+    require(request["allowed_mentions"]["parse"].empty(),
+            "all broad mentions must remain disabled");
+    require(request["allowed_mentions"]["roles"].size() == 1
+                && request["allowed_mentions"]["roles"][0] == "234567890123456789",
+            "only the configured role should be allowed to mention");
 }
 
 void testPolicy() {
@@ -144,6 +189,7 @@ void testLiveHtml(const char* path) {
 int main(int argc, char** argv) {
     try {
         testParserAndMessage();
+        testDiscordRoleMention();
         testPolicy();
         testStateRepository();
         if (argc > 1) testLiveHtml(argv[1]);

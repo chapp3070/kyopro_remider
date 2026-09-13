@@ -6,6 +6,7 @@
 
 namespace reminder {
 
-std::string makeNotificationContent(const Contest& contest);
+std::string makeNotificationContent(const Contest& contest,
+                                    const std::string& roleId);
 
 } // namespace reminder

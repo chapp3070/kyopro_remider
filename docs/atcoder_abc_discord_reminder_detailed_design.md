@@ -83,9 +83,11 @@ SSH接続先 ryutoserver
 
 ### 3.1 Discordへ送る本文
 
-Discord APIへ送る`content`は次の形式に固定する。`{N}`はABC番号、`{START}`と`{END}`はJSTの`HH:mm`で置換する。先頭の`#`はDiscord Markdownの見出し、`[...]`はコンテストURLへのインラインリンクである。
+Discord APIへ送る`content`は次の形式に固定する。`{ROLE_ID}`は`競プロ`ロールのID、`{N}`はABC番号、`{START}`と`{END}`はJSTの`HH:mm`で置換する。`<@&{ROLE_ID}>`はDiscordのロールメンションで、表示上は`@競プロ`になる。先頭からロールメンション、空行、本文の順に配置する。本文内の`#`はDiscord Markdownの見出し、`[...]`はコンテストURLへのインラインリンクである。
 
 ```text
+<@&{ROLE_ID}>
+
 # AtCoder Beginner Contest {N}
 
 本日 {START} ～ {END} に [AtCoder Beginner Contest {N}](https://atcoder.jp/contests/abc{N}) が開催されます。
@@ -96,6 +98,8 @@ Discord APIへ送る`content`は次の形式に固定する。`{N}`はABC番号�
 例:
 
 ```text
+<@&123456789012345678>
+
 # AtCoder Beginner Contest 475
 
 本日 21:00 ～ 22:40 に [AtCoder Beginner Contest 475](https://atcoder.jp/contests/abc475) が開催されます。
@@ -366,11 +370,14 @@ bool shouldSendNormal(const CurrentContest& state, UnixSeconds now) {
 
 JST日時を`HH:mm`で整形し、3章の固定本文を生成する。コンテスト番号は整数から生成し、AtCoder HTMLの名称を本文へ直接コピーしない。
 
-DiscordのJSON本文はnlohmann/jsonで生成し、手作業の文字列連結によるJSON破壊を防ぐ。`allowed_mentions`は次の値に固定する。
+DiscordのJSON本文はnlohmann/jsonで生成し、手作業の文字列連結によるJSON破壊を防ぐ。`allowed_mentions.parse`を空配列にしたうえで、設定された`競プロ`ロールIDだけを`allowed_mentions.roles`へ指定する。
 
 ```json
 {
-  "allowed_mentions": { "parse": [] }
+  "allowed_mentions": {
+    "parse": [],
+    "roles": ["{ROLE_ID}"]
+  }
 }
 ```
 
@@ -388,7 +395,7 @@ POST本文:
 ```json
 {
   "content": "...画像仕様の本文...",
-  "allowed_mentions": { "parse": [] },
+  "allowed_mentions": { "parse": [], "roles": ["{ROLE_ID}"] },
   "nonce": "normal:abc475:...",
   "enforce_nonce": true
 }
@@ -401,6 +408,8 @@ Botに必要な権限は次のとおりとする。
 - View Channel
 - Send Messages
 - Read Message History（送信結果不明時の照合用）
+
+`競プロ`ロールはメンション可能に設定する。メンション可能でないロールをBotがメンションする場合は、BotにDiscordの`Mention @everyone, @here, and All Roles`権限を付与する。
 
 ## 7. 永続化設計
 
@@ -587,7 +596,7 @@ RestartSec=30
 - ABC番号は整数として解析し、異常に大きい値を拒否する。
 - 日時・開催時間が不正な候補は採用しない。
 - Discord本文は固定テンプレートと検証済み値だけで生成する。
-- `allowed_mentions.parse`を空配列にする。
+- `allowed_mentions.parse`を空配列にし、`競プロ`ロールIDだけを`allowed_mentions.roles`へ指定する。
 - 外部HTMLから取得した文字列をSQLへ連結せず、プレースホルダーを使う。
 
 ## 11. systemd配置設計

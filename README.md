@@ -93,6 +93,7 @@ build/reminder_tests /tmp/atcoder_contests.html
 5. 生成されたURLから、通知先サーバーへBotを追加する。
 6. 通知先チャンネルの個別権限でも、Botに同じ権限を許可する。
 7. Discordの開発者モードを有効にし、通知先チャンネルのIDをコピーする。
+8. `競プロ`ロールのIDをコピーし、そのロールをメンション可能にする（またはBotに`Mention @everyone, @here, and All Roles`権限を付与する）。
 
 Botトークンはパスワードと同じ扱いにし、チャットやGitへ貼り付けません。環境ファイルには`Bot `を付けず、トークン本体だけを設定します。
 
@@ -132,6 +133,7 @@ sudoedit /etc/atcoder-abc-reminder/atcoder-abc-reminder.env
 ```env
 ATCODER_DISCORD_BOT_TOKEN=Botページで発行したトークン本体
 ATCODER_DISCORD_CHANNEL_ID=通知先チャンネルの数値ID
+ATCODER_DISCORD_ROLE_ID=競プロロールの数値ID
 ```
 
 ## 6. ビルド成果物とサービス定義の転送
@@ -214,7 +216,7 @@ curl --fail-with-body --silent --show-error \
   --header @- \
   -H "Content-Type: application/json" \
   "https://discord.com/api/v10/channels/${ATCODER_DISCORD_CHANNEL_ID}/messages" \
-  --data-raw "{\"content\":\"# AtCoder Beginner Contest 476\\n\\n本日 21:00 ～ 22:40 に [AtCoder Beginner Contest 476](https://atcoder.jp/contests/abc476) が開催されます。\\n\\n皆さんぜひ参加しましょう！🔥\",\"allowed_mentions\":{\"parse\":[]},\"nonce\":\"manual-test:$(date +%s)\",\"enforce_nonce\":true}"
+  --data-raw "{\"content\":\"<@&${ATCODER_DISCORD_ROLE_ID}>\\n\\n# AtCoder Beginner Contest 476\\n\\n本日 21:00 ～ 22:40 に [AtCoder Beginner Contest 476](https://atcoder.jp/contests/abc476) が開催されます。\\n\\n皆さんぜひ参加しましょう！🔥\",\"allowed_mentions\":{\"parse\":[],\"roles\":[\"${ATCODER_DISCORD_ROLE_ID}\"]},\"nonce\":\"manual-test:$(date +%s)\",\"enforce_nonce\":true}"
 '
 ```
 
@@ -240,6 +242,8 @@ curl --fail-with-body --silent --show-error \
 | `401` | Botページのトークン本体を再設定。`Bot `は環境ファイルへ書かない |
 | `403 Missing Access` | Botのサーバー参加、チャンネルID、チャンネル閲覧権限を確認 |
 | `403 Missing Permissions` | View Channels、Send Messages、Embed Links、Read Message Historyを確認 |
+
+ロールメンションが通知されない場合は、`競プロ`ロールのIDが正しいか、ロールがメンション可能になっているかを確認します。ロールがメンション可能でない場合は、Botに`Mention @everyone, @here, and All Roles`権限が必要です。
 
 詳細ログ:
 

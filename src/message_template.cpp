@@ -22,10 +22,12 @@ std::string formatJst(UnixSeconds epoch) {
 
 } // namespace
 
-std::string makeNotificationContent(const Contest& contest) {
+std::string makeNotificationContent(const Contest& contest,
+                                    const std::string& roleId) {
     const std::string label = "AtCoder Beginner Contest " + std::to_string(contest.number);
     const std::string url = "https://atcoder.jp/contests/" + contest.id;
-    return "# " + label + "\n\n"
+    return "<@&" + roleId + ">\n\n"
+        + "# " + label + "\n\n"
         + "本日 " + formatJst(contest.startTime) + " ～ "
         + formatJst(contest.endTime) + " に [" + label + "](" + url
         + ") が開催されます。\n\n"
