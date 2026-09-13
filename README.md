@@ -1,15 +1,12 @@
 # AtCoder ABC Discord Reminder
 
-AtCoder公式の予定コンテスト表から次回のAtCoder Beginner Contest（ABC）を取得し、開始2時間前に固定のDiscordチャンネルへ通知するC++17の常駐サービスです。実行機はUbuntu Serverを採用したDynabook、配置先は`/srv/shared/remider`（Windows側の`Y:\remider`）を前提にしています。
+AtCoder公式の予定コンテスト表から次回のAtCoder Beginner Contest（ABC）を取得し、開始2時間前にDiscordへ通知するC++17製の常駐サービスです。
 
-## 1. 動作仕様
-
-- `https://atcoder.jp/contests/?lang=ja`をHTTPSで取得する
-- `#contest-table-upcoming`内のURLが`/contests/abc数字`の行だけを対象にする
-- 開始日時と開催時間から終了日時を算出する
-- 開始2時間前に次の本文を送信する
+通知は次の形式です。`{ROLE_ID}`にはDiscordの`競プロ`ロールIDが入ります。
 
 ```text
+<@&{ROLE_ID}>
+
 # AtCoder Beginner Contest {N}
 
 本日 {START} ～ {END} に [AtCoder Beginner Contest {N}](https://atcoder.jp/contests/abc{N}) が開催されます。
@@ -17,38 +14,70 @@ AtCoder公式の予定コンテスト表から次回のAtCoder Beginner Contest�
 皆さんぜひ参加しましょう！🔥
 ```
 
-通知状態はSQLiteへ保存します。送信途中の停止や通信失敗があっても、保留状態から再試行します。Wi-Fi接続状態の確認は行わず、HTTP要求の成否だけを扱います。
+Discord APIには、設定されたロールだけをメンション対象として渡します。全体メンションや、設定外のロール・ユーザーメンションは許可しません。
 
-## 2. 構成と配置先
+## 1. 動作仕様
 
-ソースは本リポジトリで管理し、サーバーへはビルド済み実行ファイルとsystemd定義だけを転送します。
+- AtCoder公式ページ`https://atcoder.jp/contests/?lang=ja`をHTTPSで取得する
+- `#contest-table-upcoming`内のURLが`/contests/abc数字`の行だけを対象にする
+- 開始日時と開催時間から終了日時を算出する
+- 開始2時間前にDiscordへ通知する
+- 開催日時の変更を検知し、未送信なら新しい時刻で通知する
+- 送信状態をSQLiteへ保存し、再起動後も重複送信を防ぐ
+- 送信結果が不明な場合はDiscord上のメッセージを照合してから再試行する
+- Wi-Fi接続状態は確認せず、HTTP要求の成否を扱う
+
+## 2. 現在の構成
+
+ソースコードはGitで管理し、実行対象のUbuntu Serverなどへビルド済み実行ファイルを転送します。現在のサービス定義は、次の配置を前提にしています。
 
 ```text
 開発PC / WSL
-  └─ kyopro_reminderbot/
-       └─ build/atcoder-abc-reminder
+  └─ プロジェクトディレクトリ/
+       ├─ build/atcoder-abc-reminder
+       └─ deploy/atcoder-abc-reminder.service
              │ SSH/SCP
              v
-chappserver
+対象サーバー
   └─ /srv/shared/remider/
        ├─ bin/atcoder-abc-reminder
        └─ state.db
 
-/etc/atcoder-abc-reminder/atcoder-abc-reminder.env  # Botトークン等
-/etc/systemd/system/atcoder-abc-reminder.service   # サービス定義
+/etc/atcoder-abc-reminder/atcoder-abc-reminder.env
+/etc/systemd/system/atcoder-abc-reminder.service
 ```
 
-`state.db`は通常のデプロイで上書きしません。BotトークンはGit、ソース、`/srv/shared/remider`へ保存しません。
+`remider`は現在の配置先に合わせたディレクトリ名です。`reminder`など別の名前へ変更する場合は、サービス定義の`ExecStart`、`WorkingDirectory`、`ReadWritePaths`、環境ファイルの`ATCODER_STATE_DB`、および以下のコマンドをすべて同じパスへ変更してください。
 
-## 3. ローカル環境の準備とビルド
+通常の更新では`state.db`を上書きしません。BotトークンをGit、ソースコード、ビルド成果物、`/srv/shared/remider`へ保存しないでください。
 
-UbuntuまたはWSLで、プロジェクトディレクトリへ移動します。
+## 3. 作業前に変更する箇所
+
+環境ごとに、次の値を変更します。
+
+| 項目 | 例 | 変更が必要な場合 |
+|---|---|---|
+| プロジェクトディレクトリ | `/path/to/kyopro_reminderbot` | ソースを置く場所が異なる場合 |
+| SSH接続先 | `user@server.example` | 接続先・SSHユーザーが異なる場合 |
+| アプリ配置先 | `/srv/shared/remider` | サーバー上の配置先を変える場合。サービス定義も変更 |
+| サービス名 | `atcoder-abc-reminder` | systemdサービス名を変える場合。ファイル名・コマンドも変更 |
+| Discord Bot Token | 発行したトークン本体 | 必ず環境ファイルへ設定 |
+| Discord Channel ID | 通知先チャンネルの数値ID | 通知先を変える場合 |
+| Discord Role ID | `競プロ`ロールの数値ID | メンション対象ロールを変える場合 |
+
+以降のコマンドは、現在の構成である`/srv/shared/remider`とサービス名`atcoder-abc-reminder`を使用しています。別の値にする場合は、表の項目に合わせて読み替えてください。
+
+## 4. ローカル環境の準備とビルド
+
+Ubuntu、Debian、またはWSLなど、CMakeを実行できる開発環境で行います。
 
 ```bash
-cd /mnt/c/Users/chapp/mcc/kyopro_reminderbot
+cd /path/to/kyopro_reminderbot
 ```
 
-必要なパッケージをAPTで導入します。いずれも無料の標準パッケージです。
+上のパスは実際のプロジェクトディレクトリへ変更してください。
+
+必要なパッケージをインストールします。いずれも無料で利用できる標準パッケージです。
 
 ```bash
 sudo apt update
@@ -64,14 +93,14 @@ cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
 
-生成物:
+生成物は次の2つです。
 
 ```text
 build/atcoder-abc-reminder
 build/reminder_tests
 ```
 
-AtCoderのHTMLを保存している場合は、実ページ形式の解析も確認できます。
+AtCoder実ページ形式の解析も確認する場合は、次を実行します。
 
 ```bash
 curl --fail --silent --show-error \
@@ -80,114 +109,192 @@ curl --fail --silent --show-error \
 build/reminder_tests /tmp/atcoder_contests.html
 ```
 
-## 4. Discord Botの準備
+## 5. Discord Botの準備
 
-1. [Discord Developer Portal](https://discord.com/developers/applications)で、トークンを発行したアプリケーションを開く。
-2. `OAuth2` → `URL Generator`を開く。
-3. Scopeで`bot`を選択する。
-4. Bot権限として次を選択する。
+1. [Discord Developer Portal](https://discord.com/developers/applications)でアプリケーションを作成または選択する。
+2. Botを作成し、トークンを発行する。
+3. OAuth2のURL Generatorで`bot`スコープを選択する。
+4. Botに次の権限を付与する。
+
    - View Channels
    - Send Messages
    - Embed Links
    - Read Message History
+
 5. 生成されたURLから、通知先サーバーへBotを追加する。
 6. 通知先チャンネルの個別権限でも、Botに同じ権限を許可する。
 7. Discordの開発者モードを有効にし、通知先チャンネルのIDをコピーする。
-8. `競プロ`ロールのIDをコピーし、そのロールをメンション可能にする（またはBotに`Mention @everyone, @here, and All Roles`権限を付与する）。
+8. `競プロ`ロールのIDをコピーする。
+9. `競プロ`ロールをメンション可能にする。メンション不可のロールを使用する場合は、Botに`Mention @everyone, @here, and All Roles`権限を付与する。
 
-Botトークンはパスワードと同じ扱いにし、チャットやGitへ貼り付けません。環境ファイルには`Bot `を付けず、トークン本体だけを設定します。
+Botトークンはパスワードと同じ扱いにしてください。チャット、README、Gitの履歴、コマンドライン引数へ貼り付けないでください。環境ファイルには`Bot `を付けず、トークン本体だけを設定します。
 
-## 5. サーバー初回セットアップ
+## 6. サーバー初回セットアップ
 
-以下はSSH先`chappserver`で実行します。
+以下はSSH接続した対象サーバー上で実行します。
 
-サービスユーザーを作成し、実行ディレクトリを準備します。
+### 6.1 配置先とサービスユーザーの作成
 
 ```bash
-getent passwd abc-reminder || sudo useradd --system \
-  --home-dir /srv/shared/remider --no-create-home \
-  --shell /usr/sbin/nologin abc-reminder
+APP_ROOT="/srv/shared/remider"
+SERVICE_USER="abc-reminder"
 
-sudo install -d -o abc-reminder -g abc-reminder -m 750 /srv/shared/remider
-sudo install -d -o root -g root -m 755 /srv/shared/remider/bin
+getent passwd "$SERVICE_USER" || sudo useradd --system \
+  --home-dir "$APP_ROOT" --no-create-home \
+  --shell /usr/sbin/nologin "$SERVICE_USER"
+
+sudo install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 750 "$APP_ROOT"
+sudo install -d -o root -g root -m 755 "$APP_ROOT/bin"
 ```
 
-`/srv/shared`の親ディレクトリにサービスユーザーの通過権限がない環境では、次を設定します。読み取り権限ではなく、ディレクトリを通過する権限だけを追加します。
+親ディレクトリをサービスユーザーが通過できない場合だけ、権限を確認して対応します。
 
 ```bash
+namei -l /srv/shared/remider
 sudo chmod o+x /srv/shared
 ```
 
-環境ファイルを作成します。
+`chmod o+x`は`/srv/shared`の中身を読み取れるようにするものではなく、ディレクトリを通過する権限だけを追加します。より厳しい権限管理が必要な環境では、ACLなどの運用ルールに合わせて設定してください。
+
+### 6.2 環境ファイルの作成
 
 ```bash
 sudo install -d -m 755 /etc/atcoder-abc-reminder
-sudo touch /etc/atcoder-abc-reminder/atcoder-abc-reminder.env
-sudo chown root:root /etc/atcoder-abc-reminder/atcoder-abc-reminder.env
-sudo chmod 600 /etc/atcoder-abc-reminder/atcoder-abc-reminder.env
+sudo install -o root -g root -m 600 /dev/null \
+  /etc/atcoder-abc-reminder/atcoder-abc-reminder.env
 sudoedit /etc/atcoder-abc-reminder/atcoder-abc-reminder.env
 ```
 
-内容:
+内容は次のとおりです。
 
 ```env
 ATCODER_DISCORD_BOT_TOKEN=Botページで発行したトークン本体
 ATCODER_DISCORD_CHANNEL_ID=通知先チャンネルの数値ID
 ATCODER_DISCORD_ROLE_ID=競プロロールの数値ID
+# 任意。省略時は/srv/shared/remider/state.db
+# ATCODER_STATE_DB=/srv/shared/remider/state.db
 ```
 
-## 6. ビルド成果物とサービス定義の転送
-
-以下はSSH接続を抜けた状態のPowerShellで実行します。`scp`は送信元と送信先の両方が必要です。
-
-```powershell
-scp "C:\Users\chapp\mcc\kyopro_reminderbot\build\atcoder-abc-reminder" administer@chappserver:/tmp/atcoder-abc-reminder
-scp "C:\Users\chapp\mcc\kyopro_reminderbot\deploy\atcoder-abc-reminder.service" administer@chappserver:/tmp/atcoder-abc-reminder.service
-```
-
-SSH先で転送を確認し、配置します。
+保存後に権限を確認します。
 
 ```bash
-ls -l /tmp/atcoder-abc-reminder /tmp/atcoder-abc-reminder.service
-sudo install -o root -g root -m 755 /tmp/atcoder-abc-reminder /srv/shared/remider/bin/atcoder-abc-reminder
-sudo install -o root -g root -m 644 /tmp/atcoder-abc-reminder.service /etc/systemd/system/atcoder-abc-reminder.service
+sudo chown root:root /etc/atcoder-abc-reminder/atcoder-abc-reminder.env
+sudo chmod 600 /etc/atcoder-abc-reminder/atcoder-abc-reminder.env
 ```
 
-サービス定義を読み込み、自動起動を有効にします。
+### 6.3 サービス定義の確認
+
+リポジトリの`deploy/atcoder-abc-reminder.service`は、次を固定値として使用します。
+
+```ini
+ExecStart=/srv/shared/remider/bin/atcoder-abc-reminder
+EnvironmentFile=/etc/atcoder-abc-reminder/atcoder-abc-reminder.env
+User=abc-reminder
+Group=abc-reminder
+WorkingDirectory=/srv/shared/remider
+```
+
+配置先を変更した場合は、サービス定義のパスも変更してから転送してください。
+
+## 7. 初回デプロイ
+
+### 7.1 開発PCからファイルを転送
+
+SSH接続中の場合は、いったん`exit`でサーバーから抜けます。開発PC側で次の変数を実際の値へ変更して実行します。
+
+```bash
+PROJECT_DIR="/path/to/kyopro_reminderbot"
+REMOTE="your-ssh-user@your-server.example"
+
+cd "$PROJECT_DIR"
+scp "build/atcoder-abc-reminder" \
+  "$REMOTE:/tmp/atcoder-abc-reminder"
+scp "deploy/atcoder-abc-reminder.service" \
+  "$REMOTE:/tmp/atcoder-abc-reminder.service"
+```
+
+SSHホスト鍵が未登録の場合は、指紋を確認してから接続してください。ホスト鍵検証を無効にしたまま転送しないでください。
+
+### 7.2 サーバーへ配置
+
+SSH接続後、転送されたファイルを確認して配置します。
+
+```bash
+APP_ROOT="/srv/shared/remider"
+
+ls -l /tmp/atcoder-abc-reminder /tmp/atcoder-abc-reminder.service
+sha256sum /tmp/atcoder-abc-reminder
+
+sudo install -o root -g root -m 755 \
+  /tmp/atcoder-abc-reminder \
+  "$APP_ROOT/bin/atcoder-abc-reminder"
+sudo install -o root -g root -m 644 \
+  /tmp/atcoder-abc-reminder.service \
+  /etc/systemd/system/atcoder-abc-reminder.service
+```
+
+### 7.3 systemdの有効化と起動
 
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl enable atcoder-abc-reminder
-```
-
-## 7. 起動確認
-
-```bash
 sudo systemctl restart atcoder-abc-reminder
-sudo systemctl status atcoder-abc-reminder
 sudo systemctl is-active atcoder-abc-reminder
+sudo systemctl status atcoder-abc-reminder --no-pager
 ```
 
 次の状態なら常駐に成功しています。
 
 ```text
-Active: active (running)
 active
+Active: active (running)
 ```
 
-ログ確認:
+ログを確認します。
 
 ```bash
 sudo journalctl -u atcoder-abc-reminder -n 50 --no-pager
 ```
 
-初回起動時は`STATE_LOAD_OK`、新しい予定を選択した場合は`CONTEST_SELECTED`が記録されます。通知時刻前にDiscordへ送信しないのは正常です。
+初回起動時の`STATE_LOAD_OK`または`STATE_EMPTY`は正常です。新しい予定を選択した場合は`CONTEST_SELECTED`が記録されます。通知時刻前にDiscordへ送信しないのも正常です。
 
-## 8. 送信テスト
+## 8. 更新デプロイ
 
-### 8.1 トークン認証だけを確認する
+ソースを更新した後、開発PCでビルドとテストを実行します。
 
-次の確認はメッセージを送信しません。`HTTP 200`ならBotトークンは有効です。
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
+```
+
+実行ファイルだけを一時ファイルとして転送し、サーバー側で確認してから置き換えます。`state.db`は転送しません。
+
+```bash
+REMOTE="your-ssh-user@your-server.example"
+scp build/atcoder-abc-reminder \
+  "$REMOTE:/tmp/atcoder-abc-reminder.new"
+```
+
+サーバー側:
+
+```bash
+APP_ROOT="/srv/shared/remider"
+
+sha256sum /tmp/atcoder-abc-reminder.new
+sudo install -o root -g root -m 755 \
+  /tmp/atcoder-abc-reminder.new \
+  "$APP_ROOT/bin/atcoder-abc-reminder"
+sudo systemctl restart atcoder-abc-reminder
+sudo systemctl is-active atcoder-abc-reminder
+sudo journalctl -u atcoder-abc-reminder -n 50 --no-pager
+```
+
+## 9. 送信テスト
+
+### 9.1 トークン認証の確認
+
+次のコマンドはメッセージを送信しません。`HTTP 200`ならBotトークンの認証に成功しています。
 
 ```bash
 sudo bash -c '
@@ -201,9 +308,9 @@ curl --silent --show-error -o /dev/null -w "HTTP %{http_code}\n" \
 '
 ```
 
-### 8.2 Discordへテスト通知を送る
+### 9.2 ロールメンション付きテスト通知
 
-次のコマンドは、設定済みチャンネルへ実際に1件送信します。SQLiteの状態は変更しません。
+次のコマンドは設定済みチャンネルへ実際に1件送信します。SQLiteの状態は変更しません。
 
 ```bash
 sudo bash -c '
@@ -215,35 +322,28 @@ curl --fail-with-body --silent --show-error \
   -X POST \
   --header @- \
   -H "Content-Type: application/json" \
+  -w "\nHTTP %{http_code}\n" \
   "https://discord.com/api/v10/channels/${ATCODER_DISCORD_CHANNEL_ID}/messages" \
   --data-raw "{\"content\":\"<@&${ATCODER_DISCORD_ROLE_ID}>\\n\\n# AtCoder Beginner Contest 476\\n\\n本日 21:00 ～ 22:40 に [AtCoder Beginner Contest 476](https://atcoder.jp/contests/abc476) が開催されます。\\n\\n皆さんぜひ参加しましょう！🔥\",\"allowed_mentions\":{\"parse\":[],\"roles\":[\"${ATCODER_DISCORD_ROLE_ID}\"]},\"nonce\":\"manual-test:$(date +%s)\",\"enforce_nonce\":true}"
 '
 ```
 
-結果の目安:
+成功時は`HTTP 200`とDiscordメッセージのJSONが返ります。Discord上で先頭に`@競プロ`が表示され、その下に本文が表示されれば成功です。
 
-| HTTP | 意味 |
-|---:|---|
-| 200 | トークン認証成功（認証確認API） |
-| 401 | トークンが無効、または余計な文字が混入 |
-| 403 / Missing Access | Botがサーバー・チャンネルへアクセスできない |
-| 403 / Missing Permissions | Botに送信権限がない |
-| 404 | チャンネルIDが誤っている、またはBotから見えない |
-| 429 / 5xx | 一時的なエラー。サービスが再試行する |
-
-## 9. 障害対応
+## 10. 障害対応
 
 | 状態 | 確認・対処 |
 |---|---|
-| `Unit ... not found` | `/etc/systemd/system/atcoder-abc-reminder.service`へ配置し、`sudo systemctl daemon-reload`を実行 |
-| `217/USER` | `abc-reminder`ユーザーを作成 |
-| `200/CHDIR` | `/srv/shared/remider`の存在と、`/srv/shared`の通過権限を確認 |
-| `203/EXEC` | `/srv/shared/remider/bin/atcoder-abc-reminder`の存在・実行権限・共有ライブラリを確認 |
-| `401` | Botページのトークン本体を再設定。`Bot `は環境ファイルへ書かない |
-| `403 Missing Access` | Botのサーバー参加、チャンネルID、チャンネル閲覧権限を確認 |
+| `Unit ... not found` | サービス定義を`/etc/systemd/system/atcoder-abc-reminder.service`へ配置し、`sudo systemctl daemon-reload`を実行 |
+| `217/USER` | `abc-reminder`ユーザーが存在するか確認 |
+| `200/CHDIR` | `WorkingDirectory`の存在と、親ディレクトリの通過権限を確認 |
+| `203/EXEC` | `ExecStart`のパス、実行権限、共有ライブラリを確認 |
+| `CONFIG_ERROR` | 環境ファイルにToken、Channel ID、Role IDが設定されているか確認。Token本体に`Bot `を付けない |
+| `401` | Botトークンを再発行・再設定。ログやチャットへトークンを貼らない |
+| `403 Missing Access` | Botが対象サーバーへ参加しているか、チャンネルIDが正しいか確認 |
 | `403 Missing Permissions` | View Channels、Send Messages、Embed Links、Read Message Historyを確認 |
-
-ロールメンションが通知されない場合は、`競プロ`ロールのIDが正しいか、ロールがメンション可能になっているかを確認します。ロールがメンション可能でない場合は、Botに`Mention @everyone, @here, and All Roles`権限が必要です。
+| ロールに通知されない | Role ID、ロールのメンション可否、Botの全ロールメンション権限を確認 |
+| `429`や`5xx` | 一時的なDiscord障害の可能性。ログを確認し、サービスの再試行を待つ |
 
 詳細ログ:
 
@@ -258,16 +358,17 @@ sudo systemctl restart atcoder-abc-reminder
 sudo systemctl is-active atcoder-abc-reminder
 ```
 
-## 10. 更新とバックアップ
+## 11. バックアップとロールバック
 
-通常更新では、ビルド済み実行ファイルを`/tmp`へ転送し、ハッシュと実行権限を確認してから切り替えます。`state.db`は転送対象にしません。
-
-SQLiteのバックアップを取得する場合:
+SQLiteの状態をバックアップする場合は、サービスを停止してからコピーします。
 
 ```bash
 sudo systemctl stop atcoder-abc-reminder
-sudo cp -a /srv/shared/remider/state.db /srv/shared/remider/state.db.backup
+sudo cp -a /srv/shared/remider/state.db \
+  /srv/shared/remider/state.db.backup
 sudo systemctl start atcoder-abc-reminder
 ```
+
+更新前の実行ファイルを保持していない場合は、Gitのコミットから再ビルドして再配置します。`state.db`を削除・上書きすると通知済み状態が失われるため、通常の更新では操作しません。
 
 詳細な状態遷移、SQLiteスキーマ、セキュリティ設計は[`docs/atcoder_abc_discord_reminder_detailed_design.md`](docs/atcoder_abc_discord_reminder_detailed_design.md)を参照してください。
