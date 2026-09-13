@@ -29,7 +29,7 @@ AtCoder公式の予定コンテスト表から次回のAtCoder Beginner Contest�
        └─ build/atcoder-abc-reminder
              │ SSH/SCP
              v
-ryutoserver
+chappserver
   └─ /srv/shared/remider/
        ├─ bin/atcoder-abc-reminder
        └─ state.db
@@ -45,7 +45,7 @@ ryutoserver
 UbuntuまたはWSLで、プロジェクトディレクトリへ移動します。
 
 ```bash
-cd /mnt/c/Users/ryuto/mcc/kyopro_reminderbot
+cd /mnt/c/Users/chapp/mcc/kyopro_reminderbot
 ```
 
 必要なパッケージをAPTで導入します。いずれも無料の標準パッケージです。
@@ -98,7 +98,7 @@ Botトークンはパスワードと同じ扱いにし、チャットやGitへ�
 
 ## 5. サーバー初回セットアップ
 
-以下はSSH先`ryutoserver`で実行します。
+以下はSSH先`chappserver`で実行します。
 
 サービスユーザーを作成し、実行ディレクトリを準備します。
 
@@ -139,8 +139,8 @@ ATCODER_DISCORD_CHANNEL_ID=通知先チャンネルの数値ID
 以下はSSH接続を抜けた状態のPowerShellで実行します。`scp`は送信元と送信先の両方が必要です。
 
 ```powershell
-scp "C:\Users\ryuto\mcc\kyopro_reminderbot\build\atcoder-abc-reminder" administer@ryutoserver:/tmp/atcoder-abc-reminder
-scp "C:\Users\ryuto\mcc\kyopro_reminderbot\deploy\atcoder-abc-reminder.service" administer@ryutoserver:/tmp/atcoder-abc-reminder.service
+scp "C:\Users\chapp\mcc\kyopro_reminderbot\build\atcoder-abc-reminder" administer@chappserver:/tmp/atcoder-abc-reminder
+scp "C:\Users\chapp\mcc\kyopro_reminderbot\deploy\atcoder-abc-reminder.service" administer@chappserver:/tmp/atcoder-abc-reminder.service
 ```
 
 SSH先で転送を確認し、配置します。
