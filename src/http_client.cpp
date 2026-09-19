@@ -150,10 +150,15 @@ HttpResponse CurlHttpClient::getJson(const std::string& url,
 HttpResponse CurlHttpClient::postJson(const std::string& url,
                                       const std::string& authorization,
                                       const std::string& body) {
-    return perform(config_, url,
-                   {"Accept: application/json", "Content-Type: application/json",
-                    "Authorization: " + authorization},
-                   true, body, 512U * 1024U, "https://discord.com/");
+    std::vector<std::string> headers{
+        "Accept: application/json",
+        "Content-Type: application/json",
+    };
+    if (!authorization.empty()) {
+        headers.push_back("Authorization: " + authorization);
+    }
+    return perform(config_, url, headers, true, body, 512U * 1024U,
+                   "https://discord.com/");
 }
 
 } // namespace reminder

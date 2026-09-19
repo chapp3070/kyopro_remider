@@ -5,12 +5,13 @@
 
 namespace reminder {
 
-class RestDiscordClient final : public DiscordClient {
+class WebhookDiscordClient final : public DiscordClient {
 public:
-    RestDiscordClient(HttpClient& http, const Config& config);
+    WebhookDiscordClient(HttpClient& http, const Config& config);
 
     SendResult send(const std::string& content,
                     const std::string& messageKey,
+                    std::string& discordMessageId,
                     std::string& error) override;
     bool findByKey(const std::string& messageKey,
                    std::string& error) override;

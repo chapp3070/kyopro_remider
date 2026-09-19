@@ -41,6 +41,7 @@ public:
     virtual ~DiscordClient() = default;
     virtual SendResult send(const std::string& content,
                             const std::string& messageKey,
+                            std::string& discordMessageId,
                             std::string& error) = 0;
     virtual bool findByKey(const std::string& messageKey,
                            std::string& error) = 0;

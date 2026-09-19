@@ -7,8 +7,7 @@
 namespace reminder {
 
 struct Config {
-    std::string discordToken;
-    std::string discordChannelId;
+    std::string discordWebhookUrl;
     std::string discordRoleId;
     std::string stateDbPath{"/srv/shared/remider/state.db"};
     std::string atcoderUrl{"https://atcoder.jp/contests/?lang=ja"};

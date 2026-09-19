@@ -386,8 +386,7 @@ DiscordのJSON本文はnlohmann/jsonで生成し、手作業の文字列連結�
 使用エンドポイント:
 
 ```text
-POST https://discord.com/api/v10/channels/{channel_id}/messages
-GET  https://discord.com/api/v10/channels/{channel_id}/messages?limit=100
+POST https://discord.com/api/webhooks/{webhook_id}/{webhook_token}?wait=true
 ```
 
 POST本文:
@@ -396,20 +395,13 @@ POST本文:
 {
   "content": "...画像仕様の本文...",
   "allowed_mentions": { "parse": [], "roles": ["{ROLE_ID}"] },
-  "nonce": "normal:abc475:...",
-  "enforce_nonce": true
+  "username": "AtCoder ABC Reminder"
 }
 ```
 
 URLの埋め込みプレビューを表示させるため、Embed抑制フラグは送らない。
 
-Botに必要な権限は次のとおりとする。
-
-- View Channel
-- Send Messages
-- Read Message History（送信結果不明時の照合用）
-
-`競プロ`ロールはメンション可能に設定する。メンション可能でないロールをBotがメンションする場合は、BotにDiscordの`Mention @everyone, @here, and All Roles`権限を付与する。
+通知先チャンネルでWebhookを作成する。`競プロ`ロールはメンション可能に設定する。
 
 ## 7. 永続化設計
 
@@ -454,7 +446,7 @@ CREATE TABLE IF NOT EXISTS notification_history (
 );
 ```
 
-`notification_history`はコンテストが次回へ移行した後も通知キーを保持し、再起動やタイムアウト後の照合に使用する。
+`notification_history`はコンテストが次回へ移行した後も通知キーとDiscordメッセージIDを保持し、再起動後の重複防止と運用確認に使用する。
 
 ### 7.3 通知状態の更新
 
@@ -469,12 +461,11 @@ CREATE TABLE IF NOT EXISTS notification_history (
 Discord送信とSQLite更新は同一トランザクションではないため、理論上の完全なExactly-onceは実現できない。本設計では次を組み合わせる。
 
 1. 送信前に保留状態を保存
-2. Discord `nonce`と`enforce_nonce`を利用
-3. タイムアウト時に直近メッセージを取得し通知キーを照合
-4. 再起動時も保留キーを照合
-5. 照合できるまで通知済みへ変更しない
+2. Webhookの`wait=true`応答からDiscordメッセージIDを取得して保存
+3. 再起動時もSQLiteの保留キーを確認して送信状態を復元
+4. 通信結果が不明な場合は未送信扱いのまま再試行する
 
-照合で既存メッセージが見つかった場合は、DiscordメッセージIDを履歴へ保存して送信済みとする。
+Webhookではチャンネル履歴を一覧取得できないため、通信結果が不明なタイミングでDiscord側だけに投稿が成立した場合は重複投稿の可能性が残る。
 
 ## 8. スケジュールと状態遷移
 
@@ -558,7 +549,7 @@ Wi-Fi接続確認は行わないが、HTTP要求の失敗は処理する。
 
 ### 10.1 秘密情報
 
-Bot Token、Wi-Fi Password、Channel IDはソースコードやGitへ記録しない。Ubuntu上のroot所有ファイルへ保存する。
+Discord Webhook URLとWi-Fi PasswordはソースコードやGitへ記録しない。Ubuntu上のroot所有ファイルへ保存する。
 
 ```text
 /etc/atcoder-abc-reminder/atcoder-abc-reminder.env
@@ -648,7 +639,7 @@ GoogleTest等の無料テストフレームワーク、またはCMakeで導入�
 | 変更前 | 通常通知未送信時に通知時刻だけ再計算 |
 | 変更後 | 訂正通知を1回、再変更時は新日時ごとに1回 |
 | SQLite | トランザクション、再起動復元、保留・送信済み状態 |
-| Discord | 2xx、429、5xx、タイムアウト、履歴照合、JSONエスケープ |
+| Discord | 2xx、429、5xx、タイムアウト、Webhook応答、JSONエスケープ |
 
 ### 12.2 統合テスト
 
@@ -690,12 +681,12 @@ Dynabook上で次を確認する。
 | FR-07 通知内容 | 画像仕様の固定本文、AtCoder URL、標準リンクプレビュー |
 | FR-08 日時変更 | 同一IDの開始・終了時刻比較 |
 | FR-09 通知後変更 | `notification_history`と訂正通知 |
-| FR-10 重複防止 | SQLite、nonce、履歴照合 |
+| FR-10 重複防止 | SQLite、Webhook応答のメッセージID保存 |
 | FR-11 状態保存 | SQLiteのローカルファイルとトランザクション |
 | FR-12 次回移行 | 開始後に取得成功した次回候補へ置換 |
 | NFR-01 軽量性 | ESP32制約を解除。ただし本文・候補・HTTP応答に上限を設ける |
 | NFR-02 常時稼働 | systemd、自動再起動、タイムアウト |
-| NFR-03 再起動耐性 | SQLite、保留通知、履歴照合 |
+| NFR-03 再起動耐性 | SQLite、保留通知 |
 | NFR-04 障害耐性 | HTTP/Discord/HTML/SQLite別の失敗処理 |
 | NFR-05 負荷抑制 | 60分/15分/5分の段階的確認間隔 |
 
@@ -741,7 +732,7 @@ SQLiteファイルは通知履歴を含むため、サービス停止後に`stat
 
 ### UOW-05 Discord通知
 
-- REST POST、履歴照合、429、再試行、リンクプレビューを実装する。
+- Webhook REST POST、429、再試行、リンクプレビューを実装する。
 - 完了条件: Discordの実チャンネルで本文とプレビューを確認する。
 
 ### UOW-06 systemd・長期稼働
@@ -752,10 +743,10 @@ SQLiteファイルは通知履歴を含むため、サービス停止後に`stat
 ## 16. 既知の制約・残存リスク
 
 1. AtCoder一覧HTMLの構造変更時は候補を安全側で無効にする。実装更新が必要になる。
-2. Discord送信とSQLite保存は別システムのため、数学的なExactly-onceは保証できない。nonceと履歴照合で重複を最小化する。
+2. Discord送信とSQLite保存は別システムのため、数学的なExactly-onceは保証できない。Webhookでは通信結果不明時に重複投稿の可能性が残る。
 3. Discordのリンクプレビューは外部サービスの生成結果であり、画像・説明・表示の完全一致は保証できない。本文とURL配置は画像仕様に固定する。
 4. Dynabookが電源断、休止、故障した時間帯は通知できない。常時給電と自動サスペンド無効化を運用条件とする。
-5. Bot Tokenが漏洩した場合はDiscord Developer Portalで再生成し、環境ファイルを更新する。
+5. Webhook URLが漏洩した場合はDiscordチャンネル設定でWebhookを再生成し、環境ファイルを更新する。
 6. Ubuntuの時刻同期が壊れている場合は誤通知防止のため通知しない。
 
 ## 17. 完成条件

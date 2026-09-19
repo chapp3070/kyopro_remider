@@ -28,12 +28,16 @@ public:
         return {};
     }
 
-    reminder::HttpResponse postJson(const std::string&, const std::string&,
+    reminder::HttpResponse postJson(const std::string& url, const std::string& authorization,
                                     const std::string& body) override {
+        postedUrl = url;
+        postedAuthorization = authorization;
         postedBody = body;
-        return reminder::HttpResponse{201, "{}", {}, {}};
+        return reminder::HttpResponse{200, R"({"id":"987654321098765432"})", {}, {}};
     }
 
+    std::string postedUrl;
+    std::string postedAuthorization;
     std::string postedBody;
 };
 
@@ -89,14 +93,21 @@ void testParserAndMessage() {
 void testDiscordRoleMention() {
     CapturingHttpClient http;
     reminder::Config config;
-    config.discordToken = "test-token";
-    config.discordChannelId = "123456789012345678";
+    config.discordWebhookUrl = "https://discord.com/api/webhooks/123456789012345678/test-token";
     config.discordRoleId = "234567890123456789";
-    reminder::RestDiscordClient discord(http, config);
+    reminder::WebhookDiscordClient discord(http, config);
     std::string error;
+    std::string discordMessageId;
     const reminder::SendResult result = discord.send(
-        "<@&234567890123456789>\n\nbody", "normal:abc476:1800000000", error);
+        "<@&234567890123456789>\n\nbody", "normal:abc476:1800000000",
+        discordMessageId, error);
     require(result == reminder::SendResult::Sent, "role mention request should be sent");
+    require(http.postedUrl
+                == "https://discord.com/api/webhooks/123456789012345678/test-token?wait=true",
+            "webhook request must ask Discord to return the created message");
+    require(http.postedAuthorization.empty(), "webhook request must not use bot authorization");
+    require(discordMessageId == "987654321098765432",
+            "webhook message ID should be captured from Discord response");
     const nlohmann::json request = nlohmann::json::parse(http.postedBody);
     require(request["content"].get<std::string>().rfind(
                 "<@&234567890123456789>\n\n", 0) == 0,

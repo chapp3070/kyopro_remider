@@ -108,21 +108,19 @@ std::optional<NotificationKind> pendingKind(const CurrentContest& state) {
 
 int run() {
     Config config;
-    config.discordToken = environment("ATCODER_DISCORD_BOT_TOKEN");
-    config.discordChannelId = environment("ATCODER_DISCORD_CHANNEL_ID");
+    config.discordWebhookUrl = environment("ATCODER_DISCORD_WEBHOOK_URL");
     config.discordRoleId = environment("ATCODER_DISCORD_ROLE_ID");
     const std::string configuredDb = environment("ATCODER_STATE_DB");
     if (!configuredDb.empty()) config.stateDbPath = configuredDb;
 
-    if (config.discordToken.empty() || config.discordChannelId.empty()
-        || config.discordRoleId.empty()) {
-        log("CONFIG_ERROR", "ATCODER_DISCORD_BOT_TOKEN, ATCODER_DISCORD_CHANNEL_ID, and ATCODER_DISCORD_ROLE_ID are required");
+    if (config.discordWebhookUrl.empty() || config.discordRoleId.empty()) {
+        log("CONFIG_ERROR", "ATCODER_DISCORD_WEBHOOK_URL and ATCODER_DISCORD_ROLE_ID are required");
         return 2;
     }
 
     CurlHttpClient http(config);
     AtCoderClient atcoder(http, config);
-    RestDiscordClient discord(http, config);
+    WebhookDiscordClient discord(http, config);
     SqliteStateRepository repository(config.stateDbPath);
 
     std::string error;
@@ -261,12 +259,14 @@ int run() {
                     nextNotificationAction = now + 300;
                 } else {
                     std::string sendError;
+                    std::string discordMessageId;
                     const SendResult result = discord.send(
-                        makeNotificationContent(state->contest, config.discordRoleId), key, sendError);
+                        makeNotificationContent(state->contest, config.discordRoleId),
+                        key, discordMessageId, sendError);
                     if (result == SendResult::Sent || result == SendResult::AlreadyExists) {
                         CurrentContest sentState = *state;
                         markSentState(sentState, kind);
-                        if (!repository.markSent(key, {}, sentState, error)) {
+                        if (!repository.markSent(key, discordMessageId, sentState, error)) {
                             log("STATE_SAVE_FAILED", error);
                             nextNotificationAction = now + 300;
                         } else {

@@ -1,5 +1,5 @@
 [Unit]
-Description=AtCoder ABC Discord Reminder Bot
+Description=AtCoder ABC Discord Reminder Webhook
 Wants=network-online.target time-sync.target
 After=network-online.target time-sync.target
 

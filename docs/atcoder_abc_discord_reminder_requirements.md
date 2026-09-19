@@ -228,7 +228,7 @@ ReminderTime = ContestStartTime - 2時間
 
 ## FR-06 Discord通知機能
 
-リマインダー時刻になった場合、Discordの指定チャンネルにBotアカウントからメッセージを送信する。
+リマインダー時刻になった場合、Discordの指定チャンネルにWebhookからメッセージを送信する。
 
 Discord Gatewayへの常時接続は行わない。
 
@@ -237,16 +237,12 @@ Discord Gatewayへの常時接続は行わない。
 必要情報：
 
 ```text
-Discord Bot Token
-Discord Channel ID
+Discord Webhook URL
+Discord Role ID
 ```
 
-Botには最低限以下の権限を付与する。
+通知先チャンネルでWebhookを作成し、通知対象ロールをメンション可能にする。
 
-```text
-View Channel
-Send Messages
-```
 
 ---
 
@@ -561,11 +557,11 @@ struct Contest {
 ```text
 Wi-Fi SSID
 Wi-Fi Password
-Discord Bot Token
-Discord Channel ID
+Discord Webhook URL
+Discord Role ID
 ```
 
-特にDiscord Bot Tokenはパスワードと同等として扱う。
+特にDiscord Webhook URLは、URLを知っている人が投稿できるためパスワードと同等として扱う。
 
 ソースコードへ直接記述せず、
 
@@ -581,8 +577,8 @@ secrets.h
 #define WIFI_SSID "..."
 #define WIFI_PASSWORD "..."
 
-#define DISCORD_BOT_TOKEN "..."
-#define DISCORD_CHANNEL_ID "..."
+#define DISCORD_WEBHOOK_URL "..."
+#define DISCORD_ROLE_ID "..."
 ```
 
 Git管理を行う場合、
@@ -593,7 +589,7 @@ secrets.h
 
 を`.gitignore`へ登録する。
 
-Discord Bot TokenをGitHubなどの公開リポジトリへ公開してはならない。
+Discord Webhook URLをGitHubなどの公開リポジトリへ公開してはならない。
 
 ---
 
@@ -880,7 +876,7 @@ include/secrets.h
 | FR-03 | AtCoder情報取得 | 必須 |
 | FR-04 | 次回ABC自動検出 | 必須 |
 | FR-05 | 開始2時間前計算 | 必須 |
-| FR-06 | Discord Bot通知 | 必須 |
+| FR-06 | Discord Webhook通知 | 必須 |
 | FR-07 | URL付き通知 | 必須 |
 | FR-08 | 日時変更自動検知 | 必須 |
 | FR-09 | 通知後の日程変更通知 | 推奨 |
