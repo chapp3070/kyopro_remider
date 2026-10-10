@@ -11,11 +11,7 @@ class HttpClient {
 public:
     virtual ~HttpClient() = default;
     virtual HttpResponse get(const std::string& url, std::size_t maxBytes) = 0;
-    virtual HttpResponse getJson(const std::string& url,
-                                 const std::string& authorization,
-                                 std::size_t maxBytes) = 0;
     virtual HttpResponse postJson(const std::string& url,
-                                  const std::string& authorization,
                                   const std::string& body) = 0;
 };
 
@@ -40,11 +36,9 @@ class DiscordClient {
 public:
     virtual ~DiscordClient() = default;
     virtual SendResult send(const std::string& content,
-                            const std::string& messageKey,
                             std::string& discordMessageId,
-                            std::string& error) = 0;
-    virtual bool findByKey(const std::string& messageKey,
-                           std::string& error) = 0;
+                            std::string& error,
+                            bool mentionRole = true) = 0;
 };
 
 } // namespace reminder

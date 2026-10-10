@@ -27,6 +27,17 @@ public:
                               bool& completed,
                               std::string& error);
     bool markWeeklyCheckCompleted(const std::string& date, std::string& error);
+    bool advanceToNextContest(const CurrentContest& previous,
+                              const CurrentContest& next,
+                              std::string& error);
+    std::optional<NextContestNotice> loadPendingNextContestNotice(std::string& error);
+    bool refreshNextContestNotice(const std::string& key,
+                                  const Contest& contest,
+                                  std::string& error);
+    bool markNextContestNoticeSent(const std::string& key,
+                                   const std::string& discordMessageId,
+                                   std::string& error);
+    bool markNextContestNoticeSkipped(const std::string& key, std::string& error);
 
 private:
     bool exec(const char* sql, std::string& error);
@@ -37,6 +48,11 @@ private:
                              const std::string& status,
                              const std::string& discordMessageId,
                              std::string& error);
+
+    bool updateNextContestNotice(const std::string& key,
+                                 const std::string& status,
+                                 const std::string& discordMessageId,
+                                 std::string& error);
 
     std::string path_;
     sqlite3* db_{nullptr};

@@ -102,6 +102,14 @@ bool SqliteStateRepository::initialize(std::string& error) {
         ");"
         "CREATE TABLE IF NOT EXISTS weekly_absence_checks ("
         "check_date TEXT PRIMARY KEY, completed_at INTEGER NOT NULL"
+        ");"
+        "CREATE TABLE IF NOT EXISTS next_contest_notices ("
+        "message_key TEXT PRIMARY KEY, previous_contest_id TEXT NOT NULL,"
+        "previous_start_time INTEGER NOT NULL, previous_end_time INTEGER NOT NULL,"
+        "contest_id TEXT NOT NULL, contest_number INTEGER NOT NULL,"
+        "start_time INTEGER NOT NULL, end_time INTEGER NOT NULL,"
+        "status TEXT NOT NULL CHECK (status IN ('pending','sent','skipped')),"
+        "discord_message_id TEXT, updated_at INTEGER NOT NULL"
         ");",
         error);
 }
@@ -142,6 +150,138 @@ bool SqliteStateRepository::markWeeklyCheckCompleted(const std::string& date,
     if (!okay) error = sqliteError(db_, "could not save weekly check state");
     sqlite3_finalize(statement);
     return okay;
+}
+
+bool SqliteStateRepository::advanceToNextContest(const CurrentContest& previous,
+                                                const CurrentContest& next,
+                                                std::string& error) {
+    if (previous.contest.endTime > next.updatedAt
+        || next.contest.id == previous.contest.id
+        || next.contest.startTime <= next.updatedAt
+        || next.contest.endTime <= next.contest.startTime) {
+        error = "cannot advance before contest end or to an invalid future contest";
+        return false;
+    }
+    if (!exec("BEGIN IMMEDIATE;", error)) return false;
+    const std::string key = "next:" + previous.contest.id + ":"
+        + std::to_string(previous.contest.startTime);
+    const char* sql =
+        "INSERT OR IGNORE INTO next_contest_notices "
+        "(message_key, previous_contest_id, previous_start_time, previous_end_time, "
+        "contest_id, contest_number, start_time, end_time, status, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?);";
+    sqlite3_stmt* statement = nullptr;
+    bool okay = sqlite3_prepare_v2(db_, sql, -1, &statement, nullptr) == SQLITE_OK;
+    if (okay) {
+        okay = bindText(statement, 1, key)
+            && bindText(statement, 2, previous.contest.id)
+            && sqlite3_bind_int64(statement, 3, previous.contest.startTime) == SQLITE_OK
+            && sqlite3_bind_int64(statement, 4, previous.contest.endTime) == SQLITE_OK
+            && bindText(statement, 5, next.contest.id)
+            && sqlite3_bind_int(statement, 6, next.contest.number) == SQLITE_OK
+            && sqlite3_bind_int64(statement, 7, next.contest.startTime) == SQLITE_OK
+            && sqlite3_bind_int64(statement, 8, next.contest.endTime) == SQLITE_OK
+            && sqlite3_bind_int64(statement, 9, next.updatedAt) == SQLITE_OK
+            && sqlite3_step(statement) == SQLITE_DONE;
+    }
+    const bool inserted = okay && sqlite3_changes(db_) == 1;
+    if (statement != nullptr) sqlite3_finalize(statement);
+    if (!okay || (inserted && !saveInternal(next, {}, error))) {
+        if (error.empty()) error = sqliteError(db_, "could not queue next contest notice");
+        exec("ROLLBACK;", error);
+        return false;
+    }
+    if (!exec("COMMIT;", error)) {
+        exec("ROLLBACK;", error);
+        return false;
+    }
+    return true;
+}
+
+std::optional<NextContestNotice> SqliteStateRepository::loadPendingNextContestNotice(
+    std::string& error) {
+    error.clear();
+    const char* sql =
+        "SELECT message_key, contest_id, contest_number, start_time, end_time "
+        "FROM next_contest_notices WHERE status='pending' "
+        "ORDER BY previous_end_time, message_key LIMIT 1;";
+    sqlite3_stmt* statement = nullptr;
+    if (sqlite3_prepare_v2(db_, sql, -1, &statement, nullptr) != SQLITE_OK) {
+        error = sqliteError(db_, "could not prepare next contest notice load");
+        return std::nullopt;
+    }
+    const int result = sqlite3_step(statement);
+    if (result != SQLITE_ROW) {
+        if (result != SQLITE_DONE) error = sqliteError(db_, "could not load next contest notice");
+        sqlite3_finalize(statement);
+        return std::nullopt;
+    }
+    NextContestNotice notice;
+    notice.key = reinterpret_cast<const char*>(sqlite3_column_text(statement, 0));
+    notice.contest.id = reinterpret_cast<const char*>(sqlite3_column_text(statement, 1));
+    notice.contest.number = sqlite3_column_int(statement, 2);
+    notice.contest.startTime = sqlite3_column_int64(statement, 3);
+    notice.contest.endTime = sqlite3_column_int64(statement, 4);
+    notice.contest.url = "https://atcoder.jp/contests/" + notice.contest.id;
+    sqlite3_finalize(statement);
+    return notice;
+}
+
+bool SqliteStateRepository::refreshNextContestNotice(const std::string& key,
+                                                     const Contest& contest,
+                                                     std::string& error) {
+    const char* sql =
+        "UPDATE next_contest_notices SET contest_number=?, start_time=?, end_time=?, updated_at=? "
+        "WHERE message_key=? AND contest_id=? AND status='pending';";
+    sqlite3_stmt* statement = nullptr;
+    if (sqlite3_prepare_v2(db_, sql, -1, &statement, nullptr) != SQLITE_OK) {
+        error = sqliteError(db_, "could not prepare next contest schedule refresh");
+        return false;
+    }
+    const bool okay = sqlite3_bind_int(statement, 1, contest.number) == SQLITE_OK
+        && sqlite3_bind_int64(statement, 2, contest.startTime) == SQLITE_OK
+        && sqlite3_bind_int64(statement, 3, contest.endTime) == SQLITE_OK
+        && sqlite3_bind_int64(statement, 4, currentUnixSeconds()) == SQLITE_OK
+        && bindText(statement, 5, key)
+        && bindText(statement, 6, contest.id)
+        && sqlite3_step(statement) == SQLITE_DONE
+        && sqlite3_changes(db_) == 1;
+    if (!okay) error = sqliteError(db_, "could not refresh pending next contest schedule");
+    sqlite3_finalize(statement);
+    return okay;
+}
+
+bool SqliteStateRepository::updateNextContestNotice(const std::string& key,
+                                                   const std::string& status,
+                                                   const std::string& discordMessageId,
+                                                   std::string& error) {
+    const char* sql =
+        "UPDATE next_contest_notices SET status=?, discord_message_id=?, updated_at=? "
+        "WHERE message_key=? AND status='pending';";
+    sqlite3_stmt* statement = nullptr;
+    if (sqlite3_prepare_v2(db_, sql, -1, &statement, nullptr) != SQLITE_OK) {
+        error = sqliteError(db_, "could not prepare next contest notice update");
+        return false;
+    }
+    const bool okay = bindText(statement, 1, status)
+        && bindText(statement, 2, discordMessageId)
+        && sqlite3_bind_int64(statement, 3, currentUnixSeconds()) == SQLITE_OK
+        && bindText(statement, 4, key)
+        && sqlite3_step(statement) == SQLITE_DONE;
+    if (!okay) error = sqliteError(db_, "could not update next contest notice");
+    sqlite3_finalize(statement);
+    return okay;
+}
+
+bool SqliteStateRepository::markNextContestNoticeSent(const std::string& key,
+                                                     const std::string& discordMessageId,
+                                                     std::string& error) {
+    return updateNextContestNotice(key, "sent", discordMessageId, error);
+}
+
+bool SqliteStateRepository::markNextContestNoticeSkipped(const std::string& key,
+                                                        std::string& error) {
+    return updateNextContestNotice(key, "skipped", {}, error);
 }
 
 bool SqliteStateRepository::exec(const char* sql, std::string& error) {

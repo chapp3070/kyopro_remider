@@ -11,11 +11,7 @@ public:
     ~CurlHttpClient() override;
 
     HttpResponse get(const std::string& url, std::size_t maxBytes) override;
-    HttpResponse getJson(const std::string& url,
-                         const std::string& authorization,
-                         std::size_t maxBytes) override;
     HttpResponse postJson(const std::string& url,
-                          const std::string& authorization,
                           const std::string& body) override;
 
 private:

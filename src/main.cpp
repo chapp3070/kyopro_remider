@@ -53,7 +53,7 @@ bool updateFromAtCoder(CurrentContest& state,
                        UnixSeconds now) {
     const auto current = findContest(contests, state.contest.id);
     if (!current.has_value()) {
-        return state.contest.startTime <= now;
+        return state.contest.endTime <= now;
     }
 
     const bool changed = current->startTime != state.contest.startTime
@@ -138,8 +138,11 @@ int run() {
 
     UnixSeconds nextFetch = 0;
     UnixSeconds nextNotificationAction = 0;
+    UnixSeconds nextContestNoticeAction = 0;
     std::int64_t fetchFailures = 0;
     std::string weeklyFetchRequestedDate;
+    std::string finishedContestFetchRequestedId;
+    std::vector<Contest> confirmedFutureContests;
 
     while (true) {
         const UnixSeconds now = currentUnixSeconds();
@@ -148,6 +151,14 @@ int run() {
             log("TIME_INVALID");
             std::this_thread::sleep_for(std::chrono::minutes(1));
             continue;
+        }
+
+        if (state.has_value() && state->contest.endTime <= now
+            && finishedContestFetchRequestedId != state->contest.id) {
+            // Request the next contest once, then respect fetch/send backoff
+            // even when no future ABC is available yet.
+            nextFetch = now;
+            finishedContestFetchRequestedId = state->contest.id;
         }
 
         const std::optional<std::string> saturdayDate = dueSaturdayCheckDate(now);
@@ -165,38 +176,13 @@ int run() {
             }
         }
 
-        if (state.has_value() && pendingKind(*state).has_value()
-            && now >= nextNotificationAction) {
-            const std::string key = state->pendingMessageKey.empty()
-                ? notificationKey(*pendingKind(*state), state->contest)
-                : state->pendingMessageKey;
-            std::string reconcileError;
-            if (discord.findByKey(key, reconcileError)) {
-                const NotificationKind kind = *pendingKind(*state);
-                CurrentContest sentState = *state;
-                markSentState(sentState, kind);
-                if (!repository.markSent(key, {}, sentState, error)) {
-                    log("STATE_SAVE_FAILED", error);
-                    nextNotificationAction = now + 300;
-                } else {
-                    state = std::move(sentState);
-                    log("DISCORD_RECONCILED", key);
-                    nextNotificationAction = 0;
-                }
-            } else if (!reconcileError.empty()) {
-                log("DISCORD_RECONCILE_FAILED", reconcileError);
-                nextNotificationAction = now + 300;
-            } else {
-                // No message was found. Keep the pending state and send it below.
-                nextNotificationAction = now;
-            }
-        }
-
         if (now >= nextFetch) {
             const ParseResult fetched = atcoder.fetch(now);
+            confirmedFutureContests = fetched.tableFound && !fetched.hasInvalidAbcRows
+                ? fetched.contests : std::vector<Contest>{};
             const bool validEmptyWeeklySchedule = weeklyCheckPending
                 && fetched.tableFound && fetched.contests.empty()
-                && !fetched.hasAbcRows
+                && !fetched.hasInvalidAbcRows
                 && fetched.error == "no valid future ABC row";
             // An empty result is not treated as a valid schedule. Keeping an
             // old future contest after a parser/site change could cause a
@@ -207,14 +193,20 @@ int run() {
                 ++fetchFailures;
                 const std::int64_t backoff = std::min<std::int64_t>(3600, 300LL << std::min<std::int64_t>(fetchFailures - 1, 3));
                 nextFetch = now + backoff;
+                if (weeklyCheckPending && fetched.tableFound && fetched.hasInvalidAbcRows) {
+                    nextFetch = now + 300;
+                }
                 log("ATCODER_FETCH_FAILED",
                     fetched.error.empty() ? "no complete future ABC candidate" : fetched.error);
             } else {
                 fetchFailures = 0;
                 nextFetch = now + 60 * 60;
-                if (fetched.contests.empty()) allowNotificationAction = false;
                 bool stateChanged = false;
-                if (!state.has_value() && !fetched.contests.empty()) {
+                if (fetched.contests.empty()) {
+                    // A valid empty weekly schedule does not replace or clear
+                    // the persisted reminder target.
+                    allowNotificationAction = false;
+                } else if (!state.has_value()) {
                     state = newState(fetched.contests.front(), now);
                     stateChanged = true;
                     log("CONTEST_SELECTED", state->contest.id);
@@ -229,39 +221,38 @@ int run() {
                         allowNotificationAction = false;
                         log("CONTEST_NOT_CONFIRMED", state->contest.id);
                     }
-                    if (shouldMove && state->contest.startTime <= now) {
-                        if (!fetched.contests.empty()) {
-                            state = newState(fetched.contests.front(), now);
-                            stateChanged = true;
-                            log("CONTEST_FINISHED", "moved to " + state->contest.id);
+                    nextFetch = now + atcoderCheckIntervalSeconds(&*state, now);
+                    const auto next = currentContestMissing && !fetched.hasInvalidAbcRows
+                        ? nextContestAfterEnd(*state, fetched.contests, now) : std::nullopt;
+                    if (next.has_value()) {
+                        CurrentContest nextState = newState(*next, now);
+                        if (repository.advanceToNextContest(*state, nextState, error)) {
+                            state = std::move(nextState);
+                            nextFetch = now + atcoderCheckIntervalSeconds(&*state, now);
+                            log("CONTEST_FINISHED", "queued next notice for " + state->contest.id);
                         } else {
-                            if (!repository.clear(error)) {
-                                log("STATE_CLEAR_FAILED", error);
-                            } else {
-                                state.reset();
-                                stateChanged = false;
-                                log("CONTEST_FINISHED", "no future ABC found");
-                            }
+                            allowNotificationAction = false;
+                            nextFetch = now + 300;
+                            log("NEXT_CONTEST_STATE_FAILED", error);
                         }
+                    } else if (currentContestMissing && state->contest.endTime <= now) {
+                        allowNotificationAction = false;
+                        nextFetch = now + 300;
+                        log("NEXT_CONTEST_SCHEDULE_INVALID", state->contest.id);
                     } else {
                         stateChanged = shouldMove;
                     }
-                    const std::int64_t interval = atcoderCheckIntervalSeconds(
-                        state.has_value() ? &*state : nullptr, now);
-                    nextFetch = now + interval;
                 }
                 if (stateChanged && state.has_value()) {
                     state->updatedAt = now;
                     if (!repository.save(*state, error)) log("STATE_SAVE_FAILED", error);
                 }
 
-                if (weeklyCheckPending) {
-                    const bool abcScheduledToday = std::any_of(
-                        fetched.contests.begin(), fetched.contests.end(),
-                        [&saturdayDate](const Contest& contest) {
-                            return jstDateKey(contest.startTime) == *saturdayDate;
-                        });
-                    if (abcScheduledToday) {
+                if (weeklyCheckPending && fetched.hasInvalidAbcRows) {
+                    log("WEEKLY_CHECK_SCHEDULE_INVALID", *saturdayDate);
+                    nextFetch = now + 300;
+                } else if (weeklyCheckPending) {
+                    if (fetched.hasAbcToday) {
                         if (!repository.markWeeklyCheckCompleted(*saturdayDate, error)) {
                             log("WEEKLY_CHECK_STATE_FAILED", error);
                             nextFetch = now + 300;
@@ -269,13 +260,12 @@ int run() {
                             log("WEEKLY_CHECK_CONTEST_FOUND", *saturdayDate);
                         }
                     } else {
-                        const std::string key = "weekly-no-abc:" + *saturdayDate;
                         std::string sendError;
                         std::string discordMessageId;
                         const SendResult result = discord.send(
                             makeNoContestTodayContent(config.discordRoleId),
-                            key, discordMessageId, sendError);
-                        if (result == SendResult::Sent || result == SendResult::AlreadyExists) {
+                            discordMessageId, sendError);
+                        if (result == SendResult::Sent) {
                             if (!repository.markWeeklyCheckCompleted(*saturdayDate, error)) {
                                 log("WEEKLY_CHECK_STATE_FAILED", error);
                                 nextFetch = now + 300;
@@ -291,7 +281,52 @@ int run() {
             }
         }
 
-        if (allowNotificationAction && state.has_value() && now >= nextNotificationAction) {
+        if (now >= nextContestNoticeAction) {
+            const auto notice = repository.loadPendingNextContestNotice(error);
+            if (!error.empty()) {
+                log("NEXT_CONTEST_STATE_FAILED", error);
+                nextContestNoticeAction = now + 300;
+            } else if (notice.has_value()) {
+                const auto confirmed = findContest(confirmedFutureContests, notice->contest.id);
+                const auto retry = [&](UnixSeconds delay) {
+                    nextContestNoticeAction = now + delay;
+                    nextFetch = std::min(nextFetch, nextContestNoticeAction);
+                };
+                if (!confirmed.has_value() && notice->contest.startTime <= now) {
+                    if (repository.markNextContestNoticeSkipped(notice->key, error)) {
+                        log("NEXT_CONTEST_NOTICE_EXPIRED", notice->key);
+                    } else {
+                        log("NEXT_CONTEST_STATE_FAILED", error);
+                        retry(300);
+                    }
+                } else if (!confirmed.has_value() || confirmed->startTime <= now) {
+                    log("NEXT_CONTEST_NOTICE_UNCONFIRMED", notice->key);
+                    retry(300);
+                } else if (!repository.refreshNextContestNotice(notice->key, *confirmed, error)) {
+                    log("NEXT_CONTEST_STATE_FAILED", error);
+                    retry(300);
+                } else {
+                    std::string sendError;
+                    std::string discordMessageId;
+                    const SendResult result = discord.send(
+                        makeNextContestContent(*confirmed), discordMessageId, sendError, false);
+                    if (result == SendResult::Sent) {
+                        if (repository.markNextContestNoticeSent(notice->key, discordMessageId, error)) {
+                            log("NEXT_CONTEST_NOTICE_SENT", notice->key);
+                        } else {
+                            log("NEXT_CONTEST_STATE_FAILED", error);
+                            retry(300);
+                        }
+                    } else {
+                        log("NEXT_CONTEST_NOTICE_RETRY", sendError);
+                        retry(result == SendResult::ConfigurationError ? 1800 : 300);
+                    }
+                }
+            }
+        }
+
+        if (allowNotificationAction && state.has_value() && now < state->contest.startTime
+            && now >= nextNotificationAction) {
             NotificationKind kind = NotificationKind::Normal;
             bool ready = false;
             if (pendingKind(*state).has_value()) {
@@ -318,8 +353,8 @@ int run() {
                     std::string discordMessageId;
                     const SendResult result = discord.send(
                         makeNotificationContent(state->contest, config.discordRoleId),
-                        key, discordMessageId, sendError);
-                    if (result == SendResult::Sent || result == SendResult::AlreadyExists) {
+                        discordMessageId, sendError);
+                    if (result == SendResult::Sent) {
                         CurrentContest sentState = *state;
                         markSentState(sentState, kind);
                         if (!repository.markSent(key, discordMessageId, sentState, error)) {
@@ -338,9 +373,6 @@ int run() {
             }
         }
 
-        if (state.has_value() && state->contest.startTime <= now) {
-            nextFetch = 0;
-        }
         std::this_thread::sleep_for(std::chrono::seconds(config.pollSeconds));
     }
 }

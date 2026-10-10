@@ -41,13 +41,12 @@ WebhookDiscordClient::WebhookDiscordClient(HttpClient& http, const Config& confi
     : http_(http), config_(config) {}
 
 SendResult WebhookDiscordClient::send(const std::string& content,
-                                      const std::string& messageKey,
                                       std::string& discordMessageId,
-                                      std::string& error) {
-    (void)messageKey;
+                                      std::string& error,
+                                      bool mentionRole) {
     discordMessageId.clear();
     if (!isDiscordWebhookUrl(config_.discordWebhookUrl)
-        || !isNumeric(config_.discordRoleId)) {
+        || (mentionRole && !isNumeric(config_.discordRoleId))) {
         error = "Discord webhook URL or role ID is missing/invalid";
         return SendResult::ConfigurationError;
     }
@@ -55,11 +54,12 @@ SendResult WebhookDiscordClient::send(const std::string& content,
     const Json request = {
         {"content", content},
         {"allowed_mentions", {{"parse", Json::array()},
-                               {"roles", Json::array({config_.discordRoleId})}}},
+                               {"roles", mentionRole ? Json::array({config_.discordRoleId})
+                                                      : Json::array()}}},
         {"username", "AtCoder ABC Reminder"},
     };
     const HttpResponse response = http_.postJson(
-        withWaitForMessage(config_.discordWebhookUrl), {}, request.dump());
+        withWaitForMessage(config_.discordWebhookUrl), request.dump());
     if (!response.transportSucceeded()) {
         error = "Discord request failed: " + response.error;
         return SendResult::RetryableError;
@@ -83,19 +83,6 @@ SendResult WebhookDiscordClient::send(const std::string& content,
     }
     error = "Discord configuration/request error: HTTP " + std::to_string(response.status);
     return SendResult::ConfigurationError;
-}
-
-bool WebhookDiscordClient::findByKey(const std::string& messageKey, std::string& error) {
-    (void)messageKey;
-    error.clear();
-    if (!isDiscordWebhookUrl(config_.discordWebhookUrl)
-        || !isNumeric(config_.discordRoleId)) {
-        error = "Discord webhook URL or role ID is missing/invalid";
-        return false;
-    }
-    // Discord webhooks cannot list channel history. SQLite still prevents normal
-    // duplicate sends; only an ambiguous network failure may require operator review.
-    return false;
 }
 
 } // namespace reminder

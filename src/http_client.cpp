@@ -139,24 +139,12 @@ HttpResponse CurlHttpClient::get(const std::string& url, std::size_t maxBytes) {
                    "https://atcoder.jp/");
 }
 
-HttpResponse CurlHttpClient::getJson(const std::string& url,
-                                     const std::string& authorization,
-                                     std::size_t maxBytes) {
-    return perform(config_, url,
-                   {"Accept: application/json", "Authorization: " + authorization},
-                   false, {}, maxBytes, "https://discord.com/");
-}
-
 HttpResponse CurlHttpClient::postJson(const std::string& url,
-                                      const std::string& authorization,
                                       const std::string& body) {
     std::vector<std::string> headers{
         "Accept: application/json",
         "Content-Type: application/json",
     };
-    if (!authorization.empty()) {
-        headers.push_back("Authorization: " + authorization);
-    }
     return perform(config_, url, headers, true, body, 512U * 1024U,
                    "https://discord.com/");
 }

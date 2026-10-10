@@ -41,11 +41,17 @@ struct CurrentContest {
     UnixSeconds updatedAt{};
 };
 
+struct NextContestNotice {
+    std::string key;
+    Contest contest;
+};
+
 struct ParseResult {
     bool tableFound{false};
     std::vector<Contest> contests;
     std::string error;
-    bool hasAbcRows{false};
+    bool hasInvalidAbcRows{false};
+    bool hasAbcToday{false};
 };
 
 struct HttpResponse {
@@ -59,7 +65,6 @@ struct HttpResponse {
 
 enum class SendResult {
     Sent,
-    AlreadyExists,
     RetryableError,
     ConfigurationError,
 };

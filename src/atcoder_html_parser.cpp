@@ -1,4 +1,5 @@
 #include "atcoder_reminder/atcoder_html_parser.hpp"
+#include "atcoder_reminder/time_service.hpp"
 
 #include <libxml/HTMLparser.h>
 #include <libxml/HTMLtree.h>
@@ -105,9 +106,11 @@ std::optional<std::int64_t> parseDuration(const std::string& value) {
     return hours * 3600 + minutes * 60;
 }
 
-std::optional<Contest> parseRow(xmlNodePtr row, UnixSeconds now, bool& hasAbcRows) {
+std::optional<Contest> parseRow(xmlNodePtr row, UnixSeconds now,
+                                bool& hasInvalidAbcRows) {
     xmlXPathContextPtr context = xmlXPathNewContext(row->doc);
     if (context == nullptr) {
+        hasInvalidAbcRows = true;
         return std::nullopt;
     }
     context->node = row;
@@ -120,15 +123,22 @@ std::optional<Contest> parseRow(xmlNodePtr row, UnixSeconds now, bool& hasAbcRow
         BAD_CAST "./td[3]", context);
 
     std::optional<Contest> result;
+    bool recognizedAbc = false;
+    bool validAbc = false;
+    static const std::regex idPattern(R"(^/contests/(abc([0-9]+))$)",
+                                       std::regex_constants::icase);
+    if (links != nullptr && links->nodesetval != nullptr) {
+        for (int index = 0; index < links->nodesetval->nodeNr; ++index) {
+            const std::string href = property(links->nodesetval->nodeTab[index], "href");
+            if (std::regex_match(href, idPattern)) {
+                recognizedAbc = true;
+            }
+        }
+    }
     if (links != nullptr && links->nodesetval != nullptr && links->nodesetval->nodeNr == 1) {
         const xmlNodePtr link = links->nodesetval->nodeTab[0];
         const std::string href = property(link, "href");
-        static const std::regex idPattern(R"(^/contests/(abc([0-9]+))$)",
-                                           std::regex_constants::icase);
         std::smatch idMatch;
-        if (std::regex_match(href, idMatch, idPattern)) {
-            hasAbcRows = true;
-        }
         if (std::regex_match(href, idMatch, idPattern)
             && times != nullptr && times->nodesetval != nullptr
             && times->nodesetval->nodeNr == 1
@@ -139,7 +149,6 @@ std::optional<Contest> parseRow(xmlNodePtr row, UnixSeconds now, bool& hasAbcRow
             const auto start = parseTimestamp(timeText);
             const auto duration = parseDuration(durationText);
             if (start.has_value() && duration.has_value() && *duration > 0
-                && *start > now
                 && *start <= std::numeric_limits<UnixSeconds>::max() - *duration) {
                 const std::string numberText = idMatch[2].str();
                 long long number = 0;
@@ -147,6 +156,7 @@ std::optional<Contest> parseRow(xmlNodePtr row, UnixSeconds now, bool& hasAbcRow
                     numberText.data(), numberText.data() + numberText.size(), number);
                 if (conversion.ec == std::errc{} && conversion.ptr == numberText.data() + numberText.size()
                     && number > 0 && number <= std::numeric_limits<int>::max()) {
+                    validAbc = true;
                     Contest contest;
                     contest.id = idMatch[1].str();
                     std::transform(contest.id.begin(), contest.id.end(), contest.id.begin(),
@@ -155,7 +165,7 @@ std::optional<Contest> parseRow(xmlNodePtr row, UnixSeconds now, bool& hasAbcRow
                     contest.startTime = *start;
                     contest.endTime = *start + *duration;
                     contest.url = "https://atcoder.jp/contests/" + contest.id;
-                    result = contest;
+                    if (*start > now) result = contest;
                 }
             }
         }
@@ -165,6 +175,7 @@ std::optional<Contest> parseRow(xmlNodePtr row, UnixSeconds now, bool& hasAbcRow
     if (times != nullptr) xmlXPathFreeObject(times);
     if (durations != nullptr) xmlXPathFreeObject(durations);
     xmlXPathFreeContext(context);
+    if (recognizedAbc && !validAbc) hasInvalidAbcRows = true;
     return result;
 }
 
@@ -213,13 +224,43 @@ ParseResult AtCoderHtmlParser::parse(const std::string& html, UnixSeconds now) c
     if (rows != nullptr && rows->nodesetval != nullptr) {
         for (int index = 0; index < rows->nodesetval->nodeNr; ++index) {
             const auto candidate = parseRow(rows->nodesetval->nodeTab[index], now,
-                                            result.hasAbcRows);
+                                            result.hasInvalidAbcRows);
             if (candidate.has_value()) {
                 result.contests.push_back(*candidate);
             }
         }
     }
     if (rows != nullptr) xmlXPathFreeObject(rows);
+
+    // Check the whole JST date without adding past ABCs to reminder targets.
+    const UnixSeconds todayStart = now - (now + 9 * 3600) % 86400;
+    const std::string today = jstDateKey(now);
+    // The ongoing section is omitted when no contest is running. Upcoming and
+    // recent tables must have the expected structure before absence is known.
+    xmlXPathObjectPtr scheduleTables = xmlXPathEvalExpression(
+        BAD_CAST "//*[@id='contest-table-upcoming' or @id='contest-table-recent']//table/tbody",
+        context);
+    if (scheduleTables == nullptr || scheduleTables->nodesetval == nullptr
+        || scheduleTables->nodesetval->nodeNr != 2) {
+        result.hasInvalidAbcRows = true;
+    }
+    if (scheduleTables != nullptr) xmlXPathFreeObject(scheduleTables);
+    xmlXPathObjectPtr dailyRows = xmlXPathEvalExpression(
+        BAD_CAST "//*[@id='contest-table-upcoming' or @id='contest-table-action' "
+                 "or @id='contest-table-recent']//tbody/tr[td]", context);
+    if (dailyRows == nullptr) {
+        result.hasInvalidAbcRows = true;
+    } else if (dailyRows->nodesetval != nullptr) {
+        for (int index = 0; index < dailyRows->nodesetval->nodeNr; ++index) {
+            const auto candidate = parseRow(dailyRows->nodesetval->nodeTab[index],
+                                            todayStart - 1,
+                                            result.hasInvalidAbcRows);
+            if (candidate.has_value() && jstDateKey(candidate->startTime) == today) {
+                result.hasAbcToday = true;
+            }
+        }
+    }
+    if (dailyRows != nullptr) xmlXPathFreeObject(dailyRows);
     xmlXPathFreeContext(context);
     xmlFreeDoc(document);
 
@@ -250,6 +291,7 @@ ParseResult AtCoderHtmlParser::parse(const std::string& html, UnixSeconds now) c
                 != conflictingIds.end();
         }),
         deduplicated.end());
+    if (!conflictingIds.empty()) result.hasInvalidAbcRows = true;
     std::sort(deduplicated.begin(), deduplicated.end(),
               [](const Contest& left, const Contest& right) {
                   if (left.startTime != right.startTime) return left.startTime < right.startTime;

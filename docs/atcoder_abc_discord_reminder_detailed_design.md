@@ -6,13 +6,13 @@
 |---|---|
 | 文書名 | AtCoder Beginner Contest Discord Reminder Bot 詳細設計書 |
 | 対応する要件定義書 | `docs/atcoder_abc_discord_reminder_requirements.md` |
-| 改訂日 | 2026-09-13 |
-| 改訂内容 | ESP32/TypeScriptからUbuntu Server/C++へ変更、通知本文を画像仕様へ変更 |
+| 改訂日 | 2026-10-10 |
+| 改訂内容 | ABC終了後の次回日時通知を追加（メンションなし）。土曜の太字未開催通知とWebhook専用方式を維持 |
 | 実行機体 | Ubuntu Serverを搭載したDynabookパソコン（SSHホスト: `ryutoserver`） |
 | 配置先 | `/srv/shared/remider`（Windows側の`Y:\remider`に対応） |
 | ソース管理場所 | 本リポジトリの開発ディレクトリ |
 | 基本言語 | C++17 |
-| 通知方式 | Discord REST API（Gateway不使用） |
+| 通知方式 | Discord Webhook REST API（Gateway不使用） |
 | 外部サーバー | 使用しない |
 | 月額固定費 | 増加させない |
 
@@ -49,6 +49,9 @@ AtCoder Beginner Contest（ABC）の次回開催日時をAtCoder公式ページ�
 - ABCのみの自動検出
 - 次回ABCの選択
 - 開始2時間前のDiscord通知
+- ABC終了後に次回の開催日時を通知（メンションなし）
+- 毎週土曜日19時（JST）に当日のABC開催予定を確認し、ない場合にDiscord通知
+- 通知本文全体の太字表示
 - 開催日時変更の検知
 - 通知後に日時が変更された場合の訂正通知
 - 通知済み状態のSQLite保存
@@ -83,37 +86,49 @@ SSH接続先 ryutoserver
 
 ### 3.1 Discordへ送る本文
 
-Discord APIへ送る`content`は次の形式に固定する。`{ROLE_ID}`は`競プロ`ロールのID、`{N}`はABC番号、`{START}`と`{END}`はJSTの`HH:mm`で置換する。`<@&{ROLE_ID}>`はDiscordのロールメンションで、表示上は`@競プロ`になる。先頭からロールメンション、空行、本文の順に配置する。本文内の`#`はDiscord Markdownの見出し、`[...]`はコンテストURLへのインラインリンクである。
+Discord APIへ送る`content`は次の形式に固定する。`{ROLE_ID}`は`競プロ`ロールのID、`{N}`はABC番号、`{START}`と`{END}`はJSTの`HH:mm`で置換する。`<@&{ROLE_ID}>`はDiscordのロールメンションで、表示上は`@競プロ`になる。先頭からロールメンション、空行、本文の順に配置し、Discord Markdownの`**`で各行を太字にする。本文内の`#`はDiscord Markdownの見出し、`[...]`はコンテストURLへのインラインリンクである。
 
 ```text
-<@&{ROLE_ID}>
+**<@&{ROLE_ID}>**
 
-# AtCoder Beginner Contest {N}
+# **AtCoder Beginner Contest {N}**
 
-本日 {START} ～ {END} に [AtCoder Beginner Contest {N}](https://atcoder.jp/contests/abc{N}) が開催されます。
+**本日 {START} ～ {END} に [AtCoder Beginner Contest {N}](https://atcoder.jp/contests/abc{N}) が開催されます。**
 
-皆さんぜひ参加しましょう！🔥
+**皆さんぜひ参加しましょう！🔥**
 ```
 
 例:
 
 ```text
-<@&123456789012345678>
+**<@&123456789012345678>**
 
-# AtCoder Beginner Contest 475
+# **AtCoder Beginner Contest 475**
 
-本日 21:00 ～ 22:40 に [AtCoder Beginner Contest 475](https://atcoder.jp/contests/abc475) が開催されます。
+**本日 21:00 ～ 22:40 に [AtCoder Beginner Contest 475](https://atcoder.jp/contests/abc475) が開催されます。**
 
-皆さんぜひ参加しましょう！🔥
+**皆さんぜひ参加しましょう！🔥**
 ```
 
-### 3.2 Discordリンクプレビュー
+### 3.2 土曜日のABC未開催通知
+
+毎週土曜日19:00（JST）以降にAtCoder予定表を取得し、開始日時が当日（JST）のABCがあるか確認する。予定・開催中・直近終了の一覧を対象とし、当日の早い時刻に開催済みのABCも未開催と判定しない。当日のABCがある場合は確認済みとして記録し、追加通知は送らない。ない場合は設定済みロールへ次の通知を送る。ロールメンションと本文は太字で表示する。
+
+```text
+**<@&{ROLE_ID}>**
+
+**今日ABCは開催されません**
+```
+
+確認日ごとにSQLiteへ完了状態を保存し、同じ日の通知を重複させない。AtCoder取得に失敗した場合は通常の取得バックオフ（5分から最大1時間）で再試行し、Discord送信に失敗した場合は5分後に再試行する。いずれも成功するまで完了扱いにしない。19時以降にサービスが起動した場合も、その日の確認が未完了なら実行する。
+
+### 3.3 Discordリンクプレビュー
 
 本文中のAtCoderインラインリンクにより、Discordの標準リンクプレビューを有効にする。画像に表示されているAtCoderのタイトル、説明、ロゴはAtCoderページのOGP情報をDiscordが取得して表示するものであり、Bot側でカスタムEmbedを生成しない。
 
 したがって、本文のMarkdownとリンク先は固定できるが、プレビューの画像・説明文・表示タイミングはDiscordまたはAtCoder側の仕様に依存する。Discord APIリクエストではリンクプレビューを抑制するフラグを指定しない。
 
-### 3.3 開始・終了時刻
+### 3.4 開始・終了時刻
 
 画像の本文に終了時刻が必要なため、Contestモデルに`endTime`を追加する。AtCoder一覧から開始時刻と開催時間を取得し、次の式で算出する。
 
@@ -122,6 +137,22 @@ endTime = startTime + duration
 ```
 
 開催時間を確実に取得できない場合は、推測値やABC固有の固定値で補完せず、候補を無効として通知しない。開始・終了時刻の双方が検証できた場合だけ通知本文を生成する。
+
+### 3.5 終了後の次回開催日時通知
+
+保存済みABCの`endTime`に到達した最初の30秒周期のループでAtCoder一覧を取得する。次回の未来ABCを確認できた場合は、次の本文を送る。日付・時刻は日本時間で表示し、終了日が異なる場合は終了側にも日付を付ける。
+
+```text
+# **次回のAtCoder Beginner Contest {N}**
+
+**次回は {YYYY/MM/DD START} ～ {END}（日本時間）に [AtCoder Beginner Contest {N}](https://atcoder.jp/contests/abc{N}) が開催される予定です。**
+```
+
+この通知はロールメンションを含めず、`allowed_mentions.parse`と`allowed_mentions.roles`をともに空配列にする。開始2時間前・日時変更・土曜未開催の通知では従来どおり設定済みロールをメンションする。
+
+次回が未発表、一覧構造が不明、またはABC行が不完全な場合は日時を推測せず再取得する。次回への移行と送信待ち通知を同一SQLiteトランザクションで保存し、再起動後も未送信なら再試行する。成功済みの通知は再送しない。長期停止中に通知対象の開始時刻を過ぎた場合は、その保留通知を`skipped`として古い予定を送らない。
+
+保留通知の再試行時もAtCoder一覧を再取得して対象IDを確認し、変更された日時を送信前にSQLiteへ反映する。対象を確認できない場合は通知を保留する。確認できた日時が延期されている場合は、その新しい予定を使用する。
 
 ## 4. システム構成
 
@@ -146,12 +177,11 @@ endTime = startTime + duration
 |                                            |
 | /srv/shared/remider/state.db               |
 +--------------------+-----------------------+
-                     | HTTPS POST/GET
+                     | HTTPS POST
                      v
 +--------------------------------------------+
-| Discord REST API                           |
-| POST /api/v10/channels/{id}/messages       |
-| GET  /api/v10/channels/{id}/messages       |
+| Discord Webhook REST API                   |
+| POST /api/webhooks/{id}/{token}?wait=true   |
 +--------------------------------------------+
 ```
 
@@ -343,10 +373,13 @@ libxml2のHTMLパーサーを使用し、AtCoderページをHTML文書として�
 同一ABC・通知前に日時変更      -> 開始/終了/通知時刻を更新
 同一ABC・通知後に日時変更      -> 訂正通知をpendingにする
 保存済みABCが未来なのに一覧から消失 -> 状態を維持し、その回の通知を保留
-現在ABCの開始時刻を経過       -> 次回候補を取得できた場合のみ置換
+現在ABCの開始時刻を経過       -> 終了時刻まで現在状態を保持、通常通知は送らない
+現在ABCの終了時刻を経過       -> 次回候補と終了後通知を同一トランザクションで保存
 ```
 
-予定表を取得できても完全な未来ABC候補が0件の場合は、HTML構造変更や必要項目欠落の可能性を考慮して取得失敗扱いとする。現在状態を削除・置換せず、バックオフ後に再取得する。これにより、解析失敗時に古い予定を誤通知しない。
+通常リマインダーでは、予定表を取得できても完全な未来ABC候補が0件の場合は取得失敗扱いとする。現在状態を削除・置換せず、バックオフ後に再取得する。土曜確認に限り、予定表構造とABC行を正常に解析できた空の一覧も確認結果として扱うが、通常リマインダーの保存状態は変更しない。
+
+土曜確認は`#contest-table-upcoming`、`#contest-table-action`、`#contest-table-recent`の開始日をJSTで比較する。ABC行の日時・開催時間が不正、リンクが曖昧、または予定が競合する場合は未開催と判断せず、5分後に再確認する。
 
 ### 6.6 `reminder_policy`
 
@@ -368,7 +401,7 @@ bool shouldSendNormal(const CurrentContest& state, UnixSeconds now) {
 
 ### 6.7 `message_template`
 
-JST日時を`HH:mm`で整形し、3章の固定本文を生成する。コンテスト番号は整数から生成し、AtCoder HTMLの名称を本文へ直接コピーしない。
+通常通知ではJST日時を`HH:mm`で整形し、終了後の次回通知では開始側に`YYYY/MM/DD HH:mm`を使用する。3章の固定本文を生成する。コンテスト番号は整数から生成し、AtCoder HTMLの名称を本文へ直接コピーしない。
 
 DiscordのJSON本文はnlohmann/jsonで生成し、手作業の文字列連結によるJSON破壊を防ぐ。`allowed_mentions.parse`を空配列にしたうえで、設定された`競プロ`ロールIDだけを`allowed_mentions.roles`へ指定する。
 
@@ -400,6 +433,8 @@ POST本文:
 ```
 
 URLの埋め込みプレビューを表示させるため、Embed抑制フラグは送らない。
+
+終了後の次回通知は`send(..., mentionRole=false)`を使い、`allowed_mentions`を`{"parse": [], "roles": []}`にする。
 
 通知先チャンネルでWebhookを作成する。`競プロ`ロールはメンション可能に設定する。
 
@@ -444,15 +479,38 @@ CREATE TABLE IF NOT EXISTS notification_history (
     discord_message_id TEXT,
     updated_at      INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS weekly_absence_checks (
+    check_date      TEXT PRIMARY KEY,
+    completed_at    INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS next_contest_notices (
+    message_key     TEXT PRIMARY KEY,
+    previous_contest_id TEXT NOT NULL,
+    previous_start_time INTEGER NOT NULL,
+    previous_end_time INTEGER NOT NULL,
+    contest_id      TEXT NOT NULL,
+    contest_number  INTEGER NOT NULL,
+    start_time      INTEGER NOT NULL,
+    end_time        INTEGER NOT NULL,
+    status          TEXT NOT NULL CHECK (status IN ('pending', 'sent', 'skipped')),
+    discord_message_id TEXT,
+    updated_at      INTEGER NOT NULL
+);
 ```
 
 `notification_history`はコンテストが次回へ移行した後も通知キーとDiscordメッセージIDを保持し、再起動後の重複防止と運用確認に使用する。
+`weekly_absence_checks`はJSTの日付ごとに土曜確認の完了時刻を保存し、同日の確認・通知を重複させない。
+`next_contest_notices`は終了したABCごとに`next:{previous_contest_id}:{previous_start_time}`をキーとし、次回開催日時通知を独立して管理する。既存DBにはこの表だけを追加し、従来の表・履歴を作り直さない。
 
 ### 7.3 通知状態の更新
 
 通常通知の送信前に、同一トランザクションで`notification_history.status = 'pending'`と`current_contest.pending_kind = 'normal'`を保存する。Discord送信成功後に履歴と現在状態を`sent`へ更新する。
 
 日時変更通知も同様に`kind = 'change'`の別キーで管理する。同一コンテストが複数回延期された場合は、変更後の開始時刻ごとに別キーを生成する。
+
+終了後通知は`advanceToNextContest`で新しい`current_contest`と`next_contest_notices.status = 'pending'`を同時に保存する。終了前の移行は拒否する。送信成功後は終了後通知だけを`sent`にし、次回大会の通常リマインダーは`pending`のまま維持する。送信待ちが次回大会の開始時刻を過ぎた場合は`skipped`にする。通信・5xx・429の失敗や送信後の保存失敗は5分後、設定エラーは30分後に再試行する。Webhookとの原子的保存ができない制約はこの通知にも適用される。
 
 保存成功前に送信済みと確定しない。SQLite更新に失敗した場合は、次回ループで送信前の状態を再確認する。
 
@@ -480,7 +538,15 @@ Webhookではチャンネル履歴を一覧取得できないため、通信結�
 
 起動直後、前回取得失敗後のバックオフ完了時、時刻同期完了時は即時取得する。通知時刻の判定は30秒周期の内部時計だけで実施し、AtCoderへアクセスしない。
 
-### 8.2 状態
+現在ABCの終了時刻に到達した場合は、通常の確認間隔を待たずにAtCoderを即時取得する。終了後に候補がない場合は現在状態を保持して取得バックオフを続け、不完全な一覧に未来候補が残っている場合も次回と確定せず5分後に再確認する。
+
+### 8.2 土曜日の確認スケジュール
+
+`dueSaturdayCheckDate`はJSTの土曜日19:00以降に当日の日付キーを返す。完了済みでなければAtCoder一覧を即時取得する。予定・開催中・直近終了の一覧に当日開始のABCがあれば完了記録だけを保存し、当日分がなければDiscordへ通知する。重複抑止はSQLiteのJST日付キーで行い、Webhookへ照合キーやBot認証ヘッダーを送らない。予定・直近終了の表とその行構造を確認できない場合や不完全なABC行を検出した場合は、未開催と判断せず再確認する。開催中の表は大会がない場合に省略されるため必須にしない。通信失敗は取得バックオフ、構造やABC行の検証失敗は5分後に再試行する。
+
+送信が成功した後にのみ`weekly_absence_checks`へ完了を記録する。Discord送信・DB保存に失敗した場合はエラーを記録して再試行する。土曜19時以降にサービスが起動した場合も同じ判定を行う。
+
+### 8.3 状態
 
 ```text
 STARTING
@@ -495,26 +561,32 @@ FETCHING_CONTEST
   v
 WAIT_FOR_REMINDER
   |--通知時刻到達--> SENDING_NORMAL
-  |--開始時刻経過--> FETCHING_NEXT
+  |--終了時刻経過--> FETCHING_NEXT
   |--確認時刻到達--> FETCHING_CONTEST
   |
   +--日時変更後の訂正通知--> SENDING_CHANGE
 
 SENDING_NORMAL/SENDING_CHANGE
   |--成功--> MARK_SENT -> WAIT_FOR_REMINDER
-  |--失敗--> RECONCILING
-                         |--既存発見--> MARK_SENT
-                         |--未発見--> WAIT（再試行）
+  |--失敗--> WAIT（保留状態を維持し、バックオフ後にPOSTを再試行）
 
-FETCHING_NEXT --取得成功--> 新しいABCを保存 -> WAIT_FOR_REMINDER
+FETCHING_NEXT --取得成功--> 新しいABCと終了後通知を保存 -> SENDING_NEXT（メンションなし）
 FETCHING_NEXT --取得失敗--> 現在状態を維持 -> WAIT
+SENDING_NEXT --成功--> 終了後通知だけsent -> WAIT_FOR_REMINDER
+SENDING_NEXT --失敗--> pendingを維持 -> バックオフ後に再試行
+
+土曜19時以降かつ当日確認未完了
+  -> FETCHING_CONTEST
+       |--当日ABCあり--> 保存済みとして完了
+       |--当日ABCなし--> SENDING_NO_ABC -> 保存済みとして完了
+       |--取得/送信失敗--> 完了記録なし -> バックオフ後に再試行
 ```
 
-### 8.3 起動時
+### 8.4 起動時
 
 1. systemdからプロセスを起動する。
 2. SQLiteを開き、スキーマを検証する。
-3. 保留通知があれば、最初にDiscord履歴を照合する。
+3. SQLiteの保留通知（終了後通知を含む）と送信済み状態を復元する。Discord履歴への照会は行わない。
 4. OS時刻が有効であることを確認する。
 5. AtCoder一覧を即時取得する。
 6. 現在状態と候補を比較し、日時変更または次回移行を適用する。
@@ -549,7 +621,7 @@ Wi-Fi接続確認は行わないが、HTTP要求の失敗は処理する。
 
 ### 10.1 秘密情報
 
-Discord Webhook URLとWi-Fi PasswordはソースコードやGitへ記録しない。Ubuntu上のroot所有ファイルへ保存する。
+Discord Webhook URLはソースコードやGitへ記録しない。Ubuntu上のroot所有ファイルへ保存する。
 
 ```text
 /etc/atcoder-abc-reminder/atcoder-abc-reminder.env
@@ -561,7 +633,7 @@ Discord Webhook URLとWi-Fi PasswordはソースコードやGitへ記録しな�
 root:root 600
 ```
 
-サービス専用ユーザーだけが読み取れるよう、実運用時には`LoadCredential`またはサービス専用のEnvironmentFileを使用する。Tokenをコマンドライン引数に置かない。
+systemdがroot権限で`EnvironmentFile`を読み込み、サービスプロセスへ渡す。サービス専用ユーザーへファイルの直接読み取り権限を付与しない。Webhook URLをコマンドライン引数に置かない。
 
 ### 10.2 systemdサンドボックス
 
@@ -636,6 +708,11 @@ GoogleTest等の無料テストフレームワーク、またはCMakeで導入�
 | 次回選択 | 過去・現在・未来・複数候補・同時刻 |
 | 通知時刻 | 開始7200秒前、24時間境界、6時間境界 |
 | 本文 | 画像仕様の改行、番号、開始・終了時刻、URL、絵文字 |
+| 太字表示 | 通常通知と未開催通知の全表示文言にDiscord Markdownの太字を適用 |
+| 土曜日確認時刻 | JST土曜18:59は対象外、19:00以降は当日確認日を返す |
+| 土曜開催判定 | 未来・開催中・当日終了のABC、翌日のABC、空予定表、不正なABC行を区別 |
+| 終了後通知 | 開始時には移行せず、終了時刻で次回を選択。日時・URL表示とメンション禁止 |
+| 終了後通知の永続化 | 既存DBへの表追加、移行と保留保存の原子性、再起動復元、重複抑止、日時更新、期限切れ |
 | 変更前 | 通常通知未送信時に通知時刻だけ再計算 |
 | 変更後 | 訂正通知を1回、再変更時は新日時ごとに1回 |
 | SQLite | トランザクション、再起動復元、保留・送信済み状態 |
@@ -647,12 +724,12 @@ libcurl、Discord、AtCoderをFakeサーバーへ差し替え、次を実行す�
 
 - 起動から次回ABC取得・保存
 - 通知時刻到達からDiscord POST・SQLite更新
-- POSTタイムアウト後に履歴から既存メッセージを発見
+- POSTタイムアウト後も保留状態を維持し、再試行する
 - AtCoder取得失敗後も既存の通知時刻を維持
 - 通知前の日時変更
 - 通知後の訂正通知
-- プロセス再起動後の保留通知再照合
-- コンテスト終了後の次回ABC移行
+- プロセス再起動後のSQLite保留通知復元と再試行
+- コンテスト終了後の次回ABC移行とメンションなし通知、通常リマインダーの独立維持
 - 連続HTTP失敗からのバックオフ復旧
 
 ### 12.3 実機・運用テスト
@@ -667,6 +744,9 @@ Dynabook上で次を確認する。
 - AtCoder実ページから開始・終了時刻を取得する
 - Discordの本文とリンクプレビューが画像仕様になる
 - 通知後に開催日時を変更した場合、訂正通知が送られる
+- 土曜日19時に当日のABC有無を判定し、未開催時だけ通知する
+- 土曜未開催通知を再起動後も同じ日に重複送信しない
+- 通常通知と土曜未開催通知がDiscord上で太字になる
 
 ## 13. 要件トレーサビリティ
 
@@ -678,12 +758,15 @@ Dynabook上で次を確認する。
 | FR-04 次回ABC | ContestManagerの未来候補ソート |
 | FR-05 2時間前 | `startTime - 7200` |
 | FR-06 Discord通知 | Discord REST API POST |
-| FR-07 通知内容 | 画像仕様の固定本文、AtCoder URL、標準リンクプレビュー |
+| FR-07 通知内容 | 固定本文、太字のDiscord Markdown、AtCoder URL、標準リンクプレビュー |
 | FR-08 日時変更 | 同一IDの開始・終了時刻比較 |
 | FR-09 通知後変更 | `notification_history`と訂正通知 |
 | FR-10 重複防止 | SQLite、Webhook応答のメッセージID保存 |
 | FR-11 状態保存 | SQLiteのローカルファイルとトランザクション |
-| FR-12 次回移行 | 開始後に取得成功した次回候補へ置換 |
+| FR-12 次回移行 | 終了時刻以降に取得・検証できた次回候補へ置換 |
+| FR-13 土曜確認 | JST土曜19時以降に当日ABCを確認し、未開催なら太字で通知 |
+| FR-14 終了後通知 | 終了後の次回日時通知をメンションなしで送信し、保留・完了状態を保存 |
+| 追加: 土曜未開催通知 | JST土曜19時判定、当日のABC抽出、`weekly_absence_checks`による重複防止 |
 | NFR-01 軽量性 | ESP32制約を解除。ただし本文・候補・HTTP応答に上限を設ける |
 | NFR-02 常時稼働 | systemd、自動再起動、タイムアウト |
 | NFR-03 再起動耐性 | SQLite、保留通知 |
@@ -698,7 +781,7 @@ FR-01はユーザー指定により「Wi-Fi接続状態を確認しない」へ�
 
 - C++、CMake、libcurl、libxml2、SQLite3、nlohmann/json、systemd: 無料で利用できるソフトウェアを使用する。
 - AtCoder: 公開ページを取得するだけで、有料APIを利用しない。
-- Discord: 既存のBot、サーバー、チャンネルを利用し、Gateway常駐基盤や有料ホスティングを使わない。
+- Discord: 既存サーバーの通知先チャンネルに作成したWebhookを利用し、Gateway常駐基盤や有料ホスティングを使わない。
 - クラウドサーバー、DB、監視サービス: 使用しない。
 
 月額固定費は増加させない。Dynabookの購入費や必要な周辺機器は一括購入費であり、電気代は機体を常時稼働させることによる変動費として発生する。
@@ -755,9 +838,12 @@ SQLiteファイルは通知履歴を含むため、サービス停止後に`stat
 - AtCoderからABC番号、開始時刻、終了時刻を自動取得する。
 - ABC番号の手動入力が不要である。
 - 開始2時間前に画像仕様の本文をDiscordへ送信する。
+- 通常通知と未開催通知の全表示文言を太字で表示する。
+- 毎週土曜日19時（JST）に当日のABC開催予定を確認し、ない場合にDiscord通知を送信する。
+- 土曜の確認結果をSQLiteへ保存し、同日の重複通知を防ぐ。
 - 本文中のAtCoderインラインリンクにより標準リンクプレビューを表示できる。
 - 開催日時変更を検知し、通知前は予定時刻を更新、通知後は訂正通知を行う。
-- 同じ通知キーの通知を重複させない。
+- SQLiteで送信済みと記録した通常・訂正通知、および完了済みの土曜確認を再起動後も再送しない。送信結果が不明な場合の重複可能性は16章の制約に従う。
 - Ubuntu・プロセス再起動後もSQLiteから状態を復元する。
 - コンテスト終了後、次回ABCへ自動移行する。
 - HTTP障害、HTML解析失敗、Discord失敗で誤った状態へ遷移しない。

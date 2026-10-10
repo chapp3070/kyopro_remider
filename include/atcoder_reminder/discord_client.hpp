@@ -10,11 +10,9 @@ public:
     WebhookDiscordClient(HttpClient& http, const Config& config);
 
     SendResult send(const std::string& content,
-                    const std::string& messageKey,
                     std::string& discordMessageId,
-                    std::string& error) override;
-    bool findByKey(const std::string& messageKey,
-                   std::string& error) override;
+                    std::string& error,
+                    bool mentionRole = true) override;
 
 private:
     HttpClient& http_;
