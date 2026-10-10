@@ -105,7 +105,7 @@ std::optional<std::int64_t> parseDuration(const std::string& value) {
     return hours * 3600 + minutes * 60;
 }
 
-std::optional<Contest> parseRow(xmlNodePtr row, UnixSeconds now) {
+std::optional<Contest> parseRow(xmlNodePtr row, UnixSeconds now, bool& hasAbcRows) {
     xmlXPathContextPtr context = xmlXPathNewContext(row->doc);
     if (context == nullptr) {
         return std::nullopt;
@@ -120,18 +120,22 @@ std::optional<Contest> parseRow(xmlNodePtr row, UnixSeconds now) {
         BAD_CAST "./td[3]", context);
 
     std::optional<Contest> result;
-    if (links != nullptr && times != nullptr && durations != nullptr
-        && links->nodesetval != nullptr && links->nodesetval->nodeNr == 1
-        && times->nodesetval != nullptr && times->nodesetval->nodeNr == 1
-        && durations->nodesetval != nullptr && durations->nodesetval->nodeNr == 1) {
+    if (links != nullptr && links->nodesetval != nullptr && links->nodesetval->nodeNr == 1) {
         const xmlNodePtr link = links->nodesetval->nodeTab[0];
         const std::string href = property(link, "href");
         static const std::regex idPattern(R"(^/contests/(abc([0-9]+))$)",
                                            std::regex_constants::icase);
         std::smatch idMatch;
-        const std::string timeText = nodeText(times->nodesetval->nodeTab[0]);
-        const std::string durationText = nodeText(durations->nodesetval->nodeTab[0]);
         if (std::regex_match(href, idMatch, idPattern)) {
+            hasAbcRows = true;
+        }
+        if (std::regex_match(href, idMatch, idPattern)
+            && times != nullptr && times->nodesetval != nullptr
+            && times->nodesetval->nodeNr == 1
+            && durations != nullptr && durations->nodesetval != nullptr
+            && durations->nodesetval->nodeNr == 1) {
+            const std::string timeText = nodeText(times->nodesetval->nodeTab[0]);
+            const std::string durationText = nodeText(durations->nodesetval->nodeTab[0]);
             const auto start = parseTimestamp(timeText);
             const auto duration = parseDuration(durationText);
             if (start.has_value() && duration.has_value() && *duration > 0
@@ -208,7 +212,8 @@ ParseResult AtCoderHtmlParser::parse(const std::string& html, UnixSeconds now) c
         BAD_CAST "//*[@id='contest-table-upcoming']//tbody/tr[td]", context);
     if (rows != nullptr && rows->nodesetval != nullptr) {
         for (int index = 0; index < rows->nodesetval->nodeNr; ++index) {
-            const auto candidate = parseRow(rows->nodesetval->nodeTab[index], now);
+            const auto candidate = parseRow(rows->nodesetval->nodeTab[index], now,
+                                            result.hasAbcRows);
             if (candidate.has_value()) {
                 result.contests.push_back(*candidate);
             }

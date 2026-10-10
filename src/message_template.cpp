@@ -34,4 +34,8 @@ std::string makeNotificationContent(const Contest& contest,
         + "皆さんぜひ参加しましょう！🔥";
 }
 
+std::string makeNoContestTodayContent(const std::string& roleId) {
+    return "<@&" + roleId + ">\n\n今日ABCは開催されません。";
+}
+
 } // namespace reminder

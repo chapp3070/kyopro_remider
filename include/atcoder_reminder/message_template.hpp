@@ -8,5 +8,6 @@ namespace reminder {
 
 std::string makeNotificationContent(const Contest& contest,
                                     const std::string& roleId);
+std::string makeNoContestTodayContent(const std::string& roleId);
 
 } // namespace reminder

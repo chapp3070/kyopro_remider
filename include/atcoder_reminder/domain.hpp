@@ -45,6 +45,7 @@ struct ParseResult {
     bool tableFound{false};
     std::vector<Contest> contests;
     std::string error;
+    bool hasAbcRows{false};
 };
 
 struct HttpResponse {

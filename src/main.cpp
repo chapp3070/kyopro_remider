@@ -6,6 +6,7 @@
 #include "atcoder_reminder/state_repository.hpp"
 #include "atcoder_reminder/time_service.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <iostream>
@@ -138,6 +139,7 @@ int run() {
     UnixSeconds nextFetch = 0;
     UnixSeconds nextNotificationAction = 0;
     std::int64_t fetchFailures = 0;
+    std::string weeklyFetchRequestedDate;
 
     while (true) {
         const UnixSeconds now = currentUnixSeconds();
@@ -146,6 +148,21 @@ int run() {
             log("TIME_INVALID");
             std::this_thread::sleep_for(std::chrono::minutes(1));
             continue;
+        }
+
+        const std::optional<std::string> saturdayDate = dueSaturdayCheckDate(now);
+        bool weeklyCheckPending = false;
+        if (saturdayDate.has_value()) {
+            bool completed = false;
+            if (!repository.weeklyCheckCompleted(*saturdayDate, completed, error)) {
+                log("WEEKLY_CHECK_STATE_FAILED", error);
+            } else if (!completed) {
+                weeklyCheckPending = true;
+                if (weeklyFetchRequestedDate != *saturdayDate) {
+                    nextFetch = now;
+                    weeklyFetchRequestedDate = *saturdayDate;
+                }
+            }
         }
 
         if (state.has_value() && pendingKind(*state).has_value()
@@ -177,11 +194,15 @@ int run() {
 
         if (now >= nextFetch) {
             const ParseResult fetched = atcoder.fetch(now);
+            const bool validEmptyWeeklySchedule = weeklyCheckPending
+                && fetched.tableFound && fetched.contests.empty()
+                && !fetched.hasAbcRows
+                && fetched.error == "no valid future ABC row";
             // An empty result is not treated as a valid schedule. Keeping an
             // old future contest after a parser/site change could cause a
             // notification for a stale time, so retry and do not send in this
             // iteration until a complete ABC candidate is available again.
-            if (!fetched.tableFound || fetched.contests.empty()) {
+            if (!fetched.tableFound || (fetched.contests.empty() && !validEmptyWeeklySchedule)) {
                 allowNotificationAction = false;
                 ++fetchFailures;
                 const std::int64_t backoff = std::min<std::int64_t>(3600, 300LL << std::min<std::int64_t>(fetchFailures - 1, 3));
@@ -191,6 +212,7 @@ int run() {
             } else {
                 fetchFailures = 0;
                 nextFetch = now + 60 * 60;
+                if (fetched.contests.empty()) allowNotificationAction = false;
                 bool stateChanged = false;
                 if (!state.has_value() && !fetched.contests.empty()) {
                     state = newState(fetched.contests.front(), now);
@@ -231,6 +253,40 @@ int run() {
                 if (stateChanged && state.has_value()) {
                     state->updatedAt = now;
                     if (!repository.save(*state, error)) log("STATE_SAVE_FAILED", error);
+                }
+
+                if (weeklyCheckPending) {
+                    const bool abcScheduledToday = std::any_of(
+                        fetched.contests.begin(), fetched.contests.end(),
+                        [&saturdayDate](const Contest& contest) {
+                            return jstDateKey(contest.startTime) == *saturdayDate;
+                        });
+                    if (abcScheduledToday) {
+                        if (!repository.markWeeklyCheckCompleted(*saturdayDate, error)) {
+                            log("WEEKLY_CHECK_STATE_FAILED", error);
+                            nextFetch = now + 300;
+                        } else {
+                            log("WEEKLY_CHECK_CONTEST_FOUND", *saturdayDate);
+                        }
+                    } else {
+                        const std::string key = "weekly-no-abc:" + *saturdayDate;
+                        std::string sendError;
+                        std::string discordMessageId;
+                        const SendResult result = discord.send(
+                            makeNoContestTodayContent(config.discordRoleId),
+                            key, discordMessageId, sendError);
+                        if (result == SendResult::Sent || result == SendResult::AlreadyExists) {
+                            if (!repository.markWeeklyCheckCompleted(*saturdayDate, error)) {
+                                log("WEEKLY_CHECK_STATE_FAILED", error);
+                                nextFetch = now + 300;
+                            } else {
+                                log("WEEKLY_NO_ABC_NOTICE_SENT", *saturdayDate);
+                            }
+                        } else {
+                            log("WEEKLY_NO_ABC_NOTICE_RETRY", sendError);
+                            nextFetch = now + 300;
+                        }
+                    }
                 }
             }
         }

@@ -23,6 +23,10 @@ public:
                   const std::string& discordMessageId,
                   const CurrentContest& state,
                   std::string& error) override;
+    bool weeklyCheckCompleted(const std::string& date,
+                              bool& completed,
+                              std::string& error);
+    bool markWeeklyCheckCompleted(const std::string& date, std::string& error);
 
 private:
     bool exec(const char* sql, std::string& error);

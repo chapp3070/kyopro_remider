@@ -99,8 +99,49 @@ bool SqliteStateRepository::initialize(std::string& error) {
         "kind TEXT NOT NULL CHECK (kind IN ('normal','change')), start_time INTEGER NOT NULL,"
         "status TEXT NOT NULL CHECK (status IN ('pending','sent','skipped')),"
         "discord_message_id TEXT, updated_at INTEGER NOT NULL"
+        ");"
+        "CREATE TABLE IF NOT EXISTS weekly_absence_checks ("
+        "check_date TEXT PRIMARY KEY, completed_at INTEGER NOT NULL"
         ");",
         error);
+}
+
+bool SqliteStateRepository::weeklyCheckCompleted(const std::string& date,
+                                                 bool& completed,
+                                                 std::string& error) {
+    const char* sql = "SELECT 1 FROM weekly_absence_checks WHERE check_date = ?;";
+    sqlite3_stmt* statement = nullptr;
+    if (sqlite3_prepare_v2(db_, sql, -1, &statement, nullptr) != SQLITE_OK) {
+        error = sqliteError(db_, "could not prepare weekly check lookup");
+        return false;
+    }
+    const bool bound = bindText(statement, 1, date);
+    const int result = bound ? sqlite3_step(statement) : SQLITE_ERROR;
+    if (!bound || (result != SQLITE_ROW && result != SQLITE_DONE)) {
+        error = sqliteError(db_, "could not read weekly check state");
+        sqlite3_finalize(statement);
+        return false;
+    }
+    completed = result == SQLITE_ROW;
+    sqlite3_finalize(statement);
+    return true;
+}
+
+bool SqliteStateRepository::markWeeklyCheckCompleted(const std::string& date,
+                                                    std::string& error) {
+    const char* sql =
+        "INSERT OR IGNORE INTO weekly_absence_checks (check_date, completed_at) VALUES (?, ?);";
+    sqlite3_stmt* statement = nullptr;
+    if (sqlite3_prepare_v2(db_, sql, -1, &statement, nullptr) != SQLITE_OK) {
+        error = sqliteError(db_, "could not prepare weekly check save");
+        return false;
+    }
+    const bool okay = bindText(statement, 1, date)
+        && sqlite3_bind_int64(statement, 2, currentUnixSeconds()) == SQLITE_OK
+        && sqlite3_step(statement) == SQLITE_DONE;
+    if (!okay) error = sqliteError(db_, "could not save weekly check state");
+    sqlite3_finalize(statement);
+    return okay;
 }
 
 bool SqliteStateRepository::exec(const char* sql, std::string& error) {
